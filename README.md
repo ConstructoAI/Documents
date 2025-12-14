@@ -96,6 +96,7 @@ Pour toute question ou assistance :
 - **Assistant IA** : Disponible 24/7 dans l'application
 - **Documentation** : Ce guide et les manuels détaillés
 - **Support** : info@constructoai.ca
+- **Téléphone** : (514) 820-1972
 
 ---
 
