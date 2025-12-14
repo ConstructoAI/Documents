@@ -99,5 +99,4 @@ Pour toute question ou assistance :
 
 ---
 
-*Documentation CONSTRUCTO AI - Version 2025.01*
-*© Constructo AI Inc. - Tous droits réservés*
+© 2025 Constructo AI - Tous droits réservés | Développé par Sylvain Leduc
