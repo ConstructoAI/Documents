@@ -95,7 +95,7 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 Pour toute question ou assistance :
 - **Assistant IA** : Disponible 24/7 dans l'application
 - **Documentation** : Ce guide et les manuels détaillés
-- **Support** : support@constructoai.ca
+- **Support** : info@constructoai.ca
 
 ---
 
