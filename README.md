@@ -59,15 +59,15 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 | Emails | Gestion des courriels | [22-emails.md](22-emails.md) |
 | Conférence | Visioconférence intégrée | [23-conference.md](23-conference.md) |
 | Assistant IA | Assistant intelligent Claude | [24-assistant-ia.md](24-assistant-ia.md) |
-| Prompts IA | Guide des prompts pour l'estimation | [29-Prompt-AI.md](29-Prompt-AI.md) |
+| Prompts IA | Guide des prompts pour l'estimation | [25-prompt-ai.md](25-prompt-ai.md) |
 
 ### Administration
 | Module | Description | Lien |
 |--------|-------------|------|
-| WEB | Outils de recherche web | [25-web.md](25-web.md) |
-| Utilisateurs | Gestion des comptes utilisateurs | [26-utilisateurs.md](26-utilisateurs.md) |
-| Configuration | Paramètres de l'entreprise | [27-configuration.md](27-configuration.md) |
-| Abonnement | Gestion de l'abonnement Stripe | [28-abonnement.md](28-abonnement.md) |
+| WEB | Outils de recherche web | [26-web.md](26-web.md) |
+| Utilisateurs | Gestion des comptes utilisateurs | [27-utilisateurs.md](27-utilisateurs.md) |
+| Configuration | Paramètres de l'entreprise | [28-configuration.md](28-configuration.md) |
+| Abonnement | Gestion de l'abonnement Stripe | [29-abonnement.md](29-abonnement.md) |
 
 ---
 
