@@ -1,24 +1,46 @@
-# Structure et Organisation des Prompts
+<h1 align="center">
+  📐 Structure et Organisation des Prompts
+</h1>
 
-La structure des prompts s'organise de manière hiérarchique, comparable à l'organisation des calques dans AutoCAD ou à la superposition de couches de peinture sur une toile. Cette approche structurée permet une interaction optimale avec l'intelligence artificielle.
+<p align="center">
+  <strong>Guide complet pour l'estimation de construction avec l'IA</strong>
+</p>
 
-## Principes fondamentaux
+<p align="center">
+  <a href="#1-prompts-généraux">Prompts Généraux</a> •
+  <a href="#2-prompts-structure">Prompts Structure</a> •
+  <a href="#3-analyse-des-plans">Analyse des Plans</a> •
+  <a href="#conseils-dutilisation">Conseils</a>
+</p>
+
+---
+
+## 📖 Introduction
+
+La structure des prompts s'organise de manière **hiérarchique**, comparable à l'organisation des calques dans AutoCAD ou à la superposition de couches de peinture sur une toile. Cette approche structurée permet une interaction optimale avec l'intelligence artificielle.
+
+### 🎯 Principes fondamentaux
 
 Pour tirer le meilleur parti de la plateforme, il est essentiel de :
 
-- Maintenir une communication claire et structurée
-- Organiser les informations de façon logique et progressive
-- Utiliser les dialogues de manière pertinente et efficace
+| Principe | Description |
+|:--------:|-------------|
+| 💬 | Maintenir une communication **claire et structurée** |
+| 📊 | Organiser les informations de façon **logique et progressive** |
+| 🔄 | Utiliser les dialogues de manière **pertinente et efficace** |
 
-La plateforme offre une grande flexibilité, permettant une personnalisation adaptée à vos besoins spécifiques, notamment pour la lecture et l'interprétation de plans. Cette adaptabilité nécessite toutefois une approche méthodique dans la formulation des requêtes.
+> **💡 Note :** La plateforme offre une grande flexibilité, permettant une personnalisation adaptée à vos besoins spécifiques, notamment pour la lecture et l'interprétation de plans. Cette adaptabilité nécessite toutefois une approche méthodique dans la formulation des requêtes.
 
 ---
 
 ## 1. Prompts Généraux
 
-### 1.1 — Estimation budgétaire de base
+### 1.1 — 💰 Estimation budgétaire de base
 
-```
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Tu es un estimateur en construction spécialisé dans l'estimation budgétaire résidentielle au Québec.
 
 **Projet** : Construction d'une maison à deux étages
@@ -40,9 +62,16 @@ Tu es un estimateur en construction spécialisé dans l'estimation budgétaire r
 4. Signale toute incohérence détectée
 ```
 
-### 1.2 — Vérification des calculs
+</details>
 
-```
+---
+
+### 1.2 — ✅ Vérification des calculs
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Effectue une vérification complète des calculs précédents.
 
 **Méthodologie** :
@@ -55,9 +84,16 @@ Effectue une vérification complète des calculs précédents.
 **Format de sortie** : Tableau de vérification avec colonnes [Poste | Calcul initial | Vérification | Statut ✓/✗]
 ```
 
-### 1.3 — Estimation détaillée avec échéancier
+</details>
 
-```
+---
+
+### 1.3 — 📋 Estimation détaillée avec échéancier
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Produis une estimation détaillée avec ventilation main-d'œuvre/matériaux.
 
 **Contenu requis** :
@@ -74,9 +110,16 @@ Produis une estimation détaillée avec ventilation main-d'œuvre/matériaux.
 **Validation** : Vérifie étape par étape la cohérence des calculs avant de présenter les résultats.
 ```
 
-### 1.4 — Devis complet
+</details>
 
-```
+---
+
+### 1.4 — 📄 Devis complet
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Produis un devis professionnel complet pour ce projet.
 
 **Structure du devis** :
@@ -94,9 +137,16 @@ Produis un devis professionnel complet pour ce projet.
 - Assure la cohérence entre les quantités et les totaux
 ```
 
-### 1.5 — Diagramme de Gantt
+</details>
 
-```
+---
+
+### 1.5 — 📅 Diagramme de Gantt
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Crée un diagramme de Gantt pour la planification du projet.
 
 **Organisation** : Par corps de métier
@@ -110,13 +160,18 @@ Crée un diagramme de Gantt pour la planification du projet.
 **Format** : Représentation visuelle en mode texte (ASCII) ou tableau avec semaines/jours
 ```
 
+</details>
+
 ---
 
 ## 2. Prompts Structure
 
-### 2.1 — Estimation pour maison unifamiliale
+### 2.1 — 🏠 Estimation pour maison unifamiliale
 
-```
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Tu es un estimateur spécialisé en structures préfabriquées.
 
 **Projet** : Maison unifamiliale
@@ -142,9 +197,16 @@ Tu es un estimateur spécialisé en structures préfabriquées.
 - Total par section
 ```
 
-### 2.2 — Estimation pour garage commercial
+</details>
 
-```
+---
+
+### 2.2 — 🏭 Estimation pour garage commercial
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Tu es un estimateur spécialisé en structures préfabriquées.
 
 **Projet** : Garage commercial
@@ -168,13 +230,18 @@ Tu es un estimateur spécialisé en structures préfabriquées.
 - Total par section
 ```
 
+</details>
+
 ---
 
 ## 3. Analyse des Plans
 
-### 3.1 — Révision complète des plans
+### 3.1 — 🔍 Révision complète des plans
 
-```
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Effectue une révision exhaustive des plans fournis.
 
 **Objectif** : Identifier tout élément manquant ou incohérent
@@ -190,9 +257,16 @@ Effectue une révision exhaustive des plans fournis.
 **Format de sortie** : Liste des éléments vérifiés avec statut et observations
 ```
 
-### 3.2 — Résumé des travaux
+</details>
 
-```
+---
+
+### 3.2 — 📝 Résumé des travaux
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Produis un résumé détaillé des travaux à effectuer.
 
 **Structure** :
@@ -210,9 +284,16 @@ Produis un résumé détaillé des travaux à effectuer.
 **Intégrer** : Les dernières modifications et mises à jour discutées
 ```
 
-### 3.3 — Estimation économique complète
+</details>
 
-```
+---
+
+### 3.3 — 💵 Estimation économique complète
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Produis une estimation complète en catégorie prix économique.
 
 **Contenu** :
@@ -228,9 +309,16 @@ Produis une estimation complète en catégorie prix économique.
 **Rappel** : Intégrer toutes les modifications récentes du projet
 ```
 
-### 3.4 — Vérification de cohérence
+</details>
 
-```
+---
+
+### 3.4 — ⚖️ Vérification de cohérence
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Effectue une vérification approfondie de la cohérence du projet.
 
 **Analyse des matériaux** :
@@ -249,9 +337,16 @@ Effectue une vérification approfondie de la cohérence du projet.
 3. Recommandations
 ```
 
-### 3.5 — Devis détaillé
+</details>
 
-```
+---
+
+### 3.5 — 📑 Devis détaillé
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Produis un devis professionnel détaillé.
 
 **Structure** :
@@ -267,9 +362,16 @@ Produis un devis professionnel détaillé.
 - Totaux par section et total général
 ```
 
-### 3.6 — Validation finale
+</details>
 
-```
+---
+
+### 3.6 — ✔️ Validation finale
+
+<details>
+<summary><strong>Afficher le prompt</strong></summary>
+
+```markdown
 Effectue une validation finale complète du projet.
 
 **Vérifications** :
@@ -286,14 +388,24 @@ Effectue une validation finale complète du projet.
 **Format de sortie** : Rapport de validation avec statut global et recommandations
 ```
 
+</details>
+
 ---
 
-## Conseils d'utilisation
+## 💡 Conseils d'utilisation
 
 Pour une efficacité maximale avec Claude :
 
-1. **Fournir le contexte** : Toujours préciser le rôle et le domaine d'expertise attendu
-2. **Structurer les données** : Utiliser des tableaux et listes pour les spécifications
-3. **Expliciter le format** : Décrire précisément la présentation souhaitée
-4. **Demander la vérification** : Inclure des instructions de validation dans chaque prompt
-5. **Itérer** : Utiliser les prompts de suivi (1.2, 3.4, 3.6) pour affiner les résultats
+| # | Conseil | Description |
+|:-:|---------|-------------|
+| 1 | **Fournir le contexte** | Toujours préciser le rôle et le domaine d'expertise attendu |
+| 2 | **Structurer les données** | Utiliser des tableaux et listes pour les spécifications |
+| 3 | **Expliciter le format** | Décrire précisément la présentation souhaitée |
+| 4 | **Demander la vérification** | Inclure des instructions de validation dans chaque prompt |
+| 5 | **Itérer** | Utiliser les prompts de suivi (1.2, 3.4, 3.6) pour affiner les résultats |
+
+---
+
+<p align="center">
+  <sub>📐 Guide d'estimation de construction • Optimisé pour Claude AI</sub>
+</p>
