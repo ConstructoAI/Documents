@@ -59,6 +59,7 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 | Emails | Gestion des courriels | [22-emails.md](22-emails.md) |
 | Conférence | Visioconférence intégrée | [23-conference.md](23-conference.md) |
 | Assistant IA | Assistant intelligent Claude | [24-assistant-ia.md](24-assistant-ia.md) |
+| Prompts IA | Guide des prompts pour l'estimation | [29-Prompt-AI.md](29-Prompt-AI.md) |
 
 ### Administration
 | Module | Description | Lien |
