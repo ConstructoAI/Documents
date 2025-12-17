@@ -13,15 +13,15 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 |--------|-------------|------|
 | Tableau de Bord | Vue d'ensemble et KPIs principaux | [01-tableau-de-bord.md](01-tableau-de-bord.md) |
 | Analytics BI | Business Intelligence et analyses avancées | [02-analytics-bi.md](02-analytics-bi.md) |
-| Projets | Gestion complète des projets de construction | [07-projets.md](07-projets.md) |
+| Projets | Gestion complète des projets de construction | [03-projets.md](03-projets.md) |
 
 ### Gestion Commerciale (CRM)
 | Module | Description | Lien |
 |--------|-------------|------|
-| Entreprises | Gestion des clients et fournisseurs | [03-entreprises.md](03-entreprises.md) |
-| Contacts | Répertoire des contacts professionnels | [04-contacts.md](04-contacts.md) |
-| Ventes | Pipeline commercial et opportunités | [05-ventes.md](05-ventes.md) |
-| Devis | Création et gestion des soumissions | [06-devis.md](06-devis.md) |
+| Entreprises | Gestion des clients et fournisseurs | [04-entreprises.md](04-entreprises.md) |
+| Contacts | Répertoire des contacts professionnels | [05-contacts.md](05-contacts.md) |
+| Ventes | Pipeline commercial et opportunités | [06-ventes.md](06-ventes.md) |
+| Devis | Création et gestion des soumissions | [07-devis.md](07-devis.md) |
 
 ### Planification
 | Module | Description | Lien |
