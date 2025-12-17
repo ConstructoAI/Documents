@@ -170,8 +170,6 @@ Crée un diagramme de Gantt pour la planification du projet.
 <summary><strong>Afficher le prompt</strong></summary>
 
 ```markdown
-Tu es un estimateur spécialisé en structures préfabriquées.
-
 **Projet** : Maison unifamiliale
 
 **Caractéristiques techniques** :
@@ -205,8 +203,6 @@ Tu es un estimateur spécialisé en structures préfabriquées.
 <summary><strong>Afficher le prompt</strong></summary>
 
 ```markdown
-Tu es un estimateur spécialisé en structures préfabriquées.
-
 **Projet** : Garage commercial
 
 **Caractéristiques techniques** :
