@@ -69,10 +69,18 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 | Configuration | Paramètres de l'entreprise | [28-configuration.md](28-configuration.md) |
 | Abonnement | Gestion de l'abonnement Stripe | [29-abonnement.md](29-abonnement.md) |
 
-### Ressources
+### Documentation Technique
 | Module | Description | Lien |
 |--------|-------------|------|
 | Analyse ERP | Comparatif des solutions ERP construction 2025 | [30-analyse-comparative-erp-2025.md](30-analyse-comparative-erp-2025.md) |
+| Architecture Globale | Vue d'ensemble architecturale du système (8 domaines, 189+ tables) | [31-architecture-globale.md](31-architecture-globale.md) |
+| API REST | Documentation complète de l'API (30+ endpoints, webhooks, exemples) | [32-api-documentation.md](32-api-documentation.md) |
+
+### Guides Pratiques
+| Guide | Description | Lien |
+|-------|-------------|------|
+| Qualification Prospects | Guide stratégique B.A.T., entonnoir 5 étapes, scripts et grilles | [33-guide-qualification-prospects.md](33-guide-qualification-prospects.md) |
+| Subventions 2025 | 50+ programmes de subventions pour entrepreneurs au Québec | [34-guide-subventions-2025.md](34-guide-subventions-2025.md) |
 
 ---
 
