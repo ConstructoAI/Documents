@@ -41,8 +41,6 @@ Pour tirer le meilleur parti de la plateforme, il est essentiel de :
 <summary><strong>Afficher le prompt</strong></summary>
 
 ```markdown
-Tu es un estimateur en construction spécialisé dans l'estimation budgétaire résidentielle au Québec.
-
 **Projet** : Construction d'une maison à deux étages
 
 **Spécifications techniques** :
