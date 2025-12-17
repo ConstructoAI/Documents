@@ -69,6 +69,11 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 | Configuration | Paramètres de l'entreprise | [28-configuration.md](28-configuration.md) |
 | Abonnement | Gestion de l'abonnement Stripe | [29-abonnement.md](29-abonnement.md) |
 
+### Ressources
+| Module | Description | Lien |
+|--------|-------------|------|
+| Analyse ERP | Comparatif des solutions ERP construction 2025 | [30-analyse-comparative-erp-2025.md](30-analyse-comparative-erp-2025.md) |
+
 ---
 
 ## Premiers Pas
