@@ -82,6 +82,11 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 | Qualification Prospects | Guide stratégique B.A.T., entonnoir 5 étapes, scripts et grilles | [33-guide-qualification-prospects.md](33-guide-qualification-prospects.md) |
 | Subventions 2025 | 50+ programmes de subventions pour entrepreneurs au Québec | [34-guide-subventions-2025.md](34-guide-subventions-2025.md) |
 
+### Immobilier
+| Module | Description | Lien |
+|--------|-------------|------|
+| Module Immobilier | Gestion complète des projets immobiliers multi-logements (terrains, financement, construction, commercialisation) | [35-immobilier.md](35-immobilier.md) |
+
 ---
 
 ## Premiers Pas
