@@ -87,6 +87,11 @@ Bienvenue dans la documentation officielle de **CONSTRUCTO AI**, votre ERP intel
 |--------|-------------|------|
 | Module Immobilier | Gestion complète des projets immobiliers multi-logements (terrains, financement, construction, commercialisation) | [35-immobilier.md](35-immobilier.md) |
 
+### Calcul Structural
+| Module | Description | Lien |
+|--------|-------------|------|
+| Charge Tributaire | Calcul structural pour le Québec (CNBC 2020, CSA O86-19, CSA S16-19) - Vérification et dimensionnement des éléments structuraux | [36-charge-tributaire.md](36-charge-tributaire.md) |
+
 ---
 
 ## Premiers Pas
