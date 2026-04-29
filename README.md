@@ -1,4 +1,4 @@
-# Manuel utilisateur — ERP Constructo
+# Manuel utilisateur — ERP AI de Constructo AI
 
 > **Logiciel de gestion intégré pour entreprises de construction au Québec**
 > **Date** : 2026-04-26
