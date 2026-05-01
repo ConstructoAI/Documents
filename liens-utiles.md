@@ -42,9 +42,9 @@
 | Organisme | Pourquoi c'est utile | URL |
 |---|---|---|
 | **CCQ** — Commission de la construction du Quebec | Conventions collectives 4 secteurs (residentiel/IC/genie civil/voirie), avantages sociaux, embauche, transferts | https://www.ccq.org |
-| **CCQ — Espace employeurs** | Declaration mensuelle des heures, retenues, paiements employeurs | https://www.ccq.org/fr-ca/employeurs |
-| **CCQ — Main-d'oeuvre** | Verification des carnets, certificats par metier | https://www.ccq.org/fr-ca/main-d-oeuvre |
-| **CCQ — Formation** | Liste des certificats et formations par metier | https://www.ccq.org/fr-ca/formation |
+| **CCQ — Espace employeurs** | Declaration mensuelle des heures, retenues, paiements employeurs | https://www.ccq.org/fr-CA |
+| **CCQ — Main-d'oeuvre** | Verification des carnets, certificats par metier | https://www.ccq.org/fr-CA |
+| **CCQ — Formation** | Liste des certificats et formations par metier | https://www.ccq.org/fr-CA/formation-perfectionnement |
 | **Quebec.ca — Emploi** | Aide a l'embauche, programmes apprentissage, subventions salariales | https://www.quebec.ca/emploi |
 
 ---
@@ -84,7 +84,7 @@
 |---|---|---|
 | **Investissement Quebec** | Pret, garantie de pret, capital pour PME industrielles ou exportatrices | https://www.investquebec.com |
 | **Hydro-Quebec — Affaires** | Subventions efficacite energetique batiments, recharge VE, electrification | https://www.hydroquebec.com/affaires |
-| **Transition energetique Quebec** | Subventions Renoclimat, Chauffez vert, Roulez vert | https://transitionenergetique.gouv.qc.ca |
+| **Transition energetique Quebec** | Subventions Renoclimat, Chauffez vert, Roulez vert | https://www.quebec.ca/agriculture-environnement-et-ressources-naturelles/energie |
 | **Habitation Quebec (SHQ)** | Programmes d'aide a la renovation residentielle (RenoRegion, AccesLogis, etc.) | https://www.habitation.gouv.qc.ca |
 | **Ministere de l'Economie** | Aide a l'innovation, automatisation, productivite, Industrie 4.0 | https://www.economie.gouv.qc.ca |
 | **Plan quebecois des infrastructures (PQI)** | Carnet de commande gouvernemental — chercher "PQI" sur le site | https://www.quebec.ca |
@@ -98,7 +98,7 @@
 | **Code de construction du Quebec** | Adoption quebecoise du CNB avec modifications. Reference legale pour tout chantier. | https://www.rbq.gouv.qc.ca/lois-reglements-et-codes |
 | **Code de securite du Quebec** | Exigences post-construction (entretien, securite incendie, ascenseurs) | https://www.rbq.gouv.qc.ca/lois-reglements-et-codes |
 | **CNB / CNRC** — Code national du batiment | Source federale, base du code quebecois | https://nrc.canada.ca/fr/certifications-evaluations-normes/codes-canada |
-| **BNQ** — Bureau de normalisation du Quebec | Normes quebecoises (BNQ-1809 chaussees, BNQ-3019 stationnement, etc.). Note : si la racine ne repond pas, chercher BNQ via Google. | https://www.bnq.qc.ca |
+| **BNQ** — Bureau de normalisation du Quebec | Normes quebecoises (BNQ-1809 chaussees, BNQ-3019 stationnement, etc.). | https://bnq.qc.ca |
 | **CSA Group** | Normes canadiennes (electrique CSA-C22.1, soudure W-59, beton A23, etc.) | https://www.csagroup.org |
 | **ULC** — Underwriters Laboratories Canada | Normes incendie (portes coupe-feu, gicleurs, alarmes) | https://canada.ul.com |
 
@@ -108,10 +108,10 @@
 
 | Registre | Pourquoi c'est utile | URL |
 |---|---|---|
-| **REQ** — Registre des entreprises | Recherche, immatriculation, declaration annuelle, mise a jour des dirigeants. Note : site impose une connexion pour la plupart des recherches. | https://www.registreentreprises.gouv.qc.ca |
+| **REQ** — Registre des entreprises | Recherche, immatriculation, declaration annuelle, mise a jour des dirigeants. Note : site impose une connexion pour la plupart des recherches. | https://www.quebec.ca/entreprises-et-travailleurs-autonomes/obtenir-renseignements-entreprise/recherche-registre-entreprises/acceder-registre-entreprises |
 | **Verif licence RBQ** | Verifier rapidement la categorie/sous-categorie d'une licence | https://www.rbq.gouv.qc.ca/services-en-ligne/licence/registre-des-detenteurs-de-licence |
 | **AMP** — Probite | RENA et AAC accessibles via le menu de amp.quebec | https://www.amp.quebec |
-| **CCQ — Verifier carnet** | Carnet de competence valide par metier | https://www.ccq.org/fr-ca/main-d-oeuvre |
+| **CCQ — Verifier carnet** | Carnet de competence valide par metier | https://www.ccq.org/fr-CA |
 | **OIQ — Tableau des membres** | Verifier qu'un ingenieur est membre en regle | https://www.oiq.qc.ca/membres |
 | **OAQ — Membres** | Verifier qu'un architecte est membre en regle | https://www.oaq.com |
 
@@ -229,7 +229,7 @@ Si vous ne devez en garder que dix au quotidien :
 | # | Nom | URL |
 |---|---|---|
 | 1 | RBQ services en ligne | https://www.rbq.gouv.qc.ca/services-en-ligne |
-| 2 | CCQ employeurs | https://www.ccq.org/fr-ca/employeurs |
+| 2 | CCQ employeurs | https://www.ccq.org/fr-CA |
 | 3 | CNESST | https://www.cnesst.gouv.qc.ca/fr |
 | 4 | Revenu Quebec entreprises | https://www.revenuquebec.ca/fr/entreprises |
 | 5 | SEAO | https://seao.gouv.qc.ca |
