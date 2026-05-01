@@ -1,6 +1,6 @@
 # Liens utiles — Construction Quebec
 
-> **Version** : 2.2
+> **Version** : 2.4
 > **Date** : 2026-05-01
 > **Cadrage** : reference curated des ressources vraiment utiles pour un entrepreneur en construction au Quebec — organismes officiels, registres, achats publics, lois, normes, formation, financement, calculateurs et veille sectorielle.
 > **Liens valides** : URLs testees et corrigees le 2026-05-01.
@@ -162,7 +162,6 @@
 |---|---|---|
 | **Constructo** — Magazine et portail | Veille sectorielle, actualites, fiches techniques, salaire moyen par metier | https://www.portailconstructo.com |
 | **Voir vert** | Construction durable, LEED, batiments performants | https://www.voirvert.ca |
-| **Esquisses** | Magazine d'architecture quebecoise | https://www.esquisses.com |
 | **Statistique Quebec** | Indices de prix, mises en chantier, statistiques main-d'oeuvre. Chercher "construction" sur le site. | https://statistique.quebec.ca |
 | **ConstructConnect Canada** | Mises en chantier nationales (donnees agregees) | https://canada.constructconnect.com |
 
@@ -176,7 +175,6 @@
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
-| **Jabacus** | Calculateurs CCQ payants — paie 4 secteurs, charges sociales, transferts entre secteurs, vacances, simulation soumission. Standard de facto chez les entrepreneurs QC. | https://jabacus.com |
 | **CalculConversion** | Calculatrices gratuites Quebec : paie nette, TPS/TVQ, charges sociales, hypotheque, commissions. Pratique pour estimations rapides. | https://www.calculconversion.com |
 | **CCQ — Calculateurs** | Calcul de vacances, transferts, retenues d'avantages sociaux (acceder via le menu Main-d'oeuvre ou Employeurs) | https://www.ccq.org |
 | **Revenu Quebec — Entreprises** | Acces a Mon dossier entreprises (WEBRAS — calcul officiel des retenues a la source provinciales), declarations TPS/TVQ | https://www.revenuquebec.ca/fr/entreprises |
@@ -205,7 +203,7 @@
 |---|---|---|
 | **Donnees Quebec** | Donnees ouvertes : zonage, plans d'urbanisme municipaux, cadastre | https://www.donneesquebec.ca |
 | **Infrastructure Canada** | Carte interactive des projets d'infrastructure planifies | https://www.infrastructure.gc.ca |
-| **BAnQ** — Bibliotheque et Archives nationales | Cartes anciennes pour due diligence en renovation/agrandissement | https://www.banq.qc.ca |
+| **BAnQ** — Bibliotheque et Archives nationales | Cartes anciennes pour due diligence en renovation/agrandissement. Note : peut afficher un captcha bot a la premiere visite. | https://www.banq.qc.ca |
 
 ---
 
@@ -217,7 +215,6 @@
 |---|---|---|
 | **SoumissionRenovation.ca** | Mise en relation client-entrepreneur, paiement par lead | https://www.soumissionrenovation.ca |
 | **HomeStars** | Annuaire reviews + demande de soumission, fort en Ontario mais present au QC | https://www.homestars.com |
-| **SmartReno** | Demande de soumission, marche QC | https://www.smartreno.com |
 | **APCHQ** — Annuaire entrepreneurs | Annuaire officiel APCHQ, accessible via le menu | https://www.apchq.com |
 
 ---
@@ -234,7 +231,7 @@ Si vous ne devez en garder que dix au quotidien :
 | 4 | Revenu Quebec entreprises | https://www.revenuquebec.ca/fr/entreprises |
 | 5 | SEAO | https://seao.gouv.qc.ca |
 | 6 | AMP | https://www.amp.quebec |
-| 7 | Jabacus | https://jabacus.com |
+| 7 | REQ (registre entreprises) | https://www.quebec.ca/entreprises-et-travailleurs-autonomes/obtenir-renseignements-entreprise/recherche-registre-entreprises/acceder-registre-entreprises |
 | 8 | CalculConversion | https://www.calculconversion.com |
 | 9 | Verif licence RBQ | https://www.rbq.gouv.qc.ca/services-en-ligne/licence/registre-des-detenteurs-de-licence |
 | 10 | LegisQuebec | https://www.legisquebec.gouv.qc.ca |
@@ -249,7 +246,7 @@ Pour proposer un ajout, ouvrir une issue dans `ConstructoAI/Documents` avec le l
 
 **Note sur les URLs** : les liens ont ete testes le 2026-05-01. La plupart pointent vers la racine du domaine plutot que vers une sous-page profonde, car les organismes restructurent regulierement leurs sites et les URLs profondes deviennent obsoletes en quelques mois. Si vous trouvez une URL plus stable, ouvrir une issue.
 
-**Avertissement** : pour les outils payants (Jabacus, APCHQ membres), un compte est requis.
+**Avertissement** : pour les outils payants comme APCHQ Membres, un compte est requis.
 
 ---
 
