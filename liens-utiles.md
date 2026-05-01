@@ -1,8 +1,9 @@
 # Liens utiles — Construction Quebec
 
-> **Version** : 2.1
+> **Version** : 2.2
 > **Date** : 2026-05-01
 > **Cadrage** : reference curated des ressources vraiment utiles pour un entrepreneur en construction au Quebec — organismes officiels, registres, achats publics, lois, normes, formation, financement, calculateurs et veille sectorielle.
+> **Liens valides** : URLs testees et corrigees le 2026-05-01.
 
 ---
 
@@ -32,7 +33,7 @@
 | **RBQ** — Regie du batiment du Quebec | Demande, renouvellement, modification de licence d'entrepreneur. Plaintes. Directives. | https://www.rbq.gouv.qc.ca |
 | **RBQ — Services en ligne** | Demarches en ligne (licence, plan de garantie, formations) | https://www.rbq.gouv.qc.ca/services-en-ligne |
 | **RBQ — Verifier une licence** | Outil public pour valider la licence d'un sous-traitant ou concurrent avant de signer | https://www.rbq.gouv.qc.ca/services-en-ligne/licence/registre-des-detenteurs-de-licence |
-| **GCR** — Garantie de construction residentielle | Plan de garantie obligatoire pour residentiel neuf (remplace l'APCHQ-GCR) | https://www.garantiegcr.com |
+| **GCR** — Garantie de construction residentielle | Plan de garantie obligatoire pour residentiel neuf | https://www.garantiegcr.com |
 
 ---
 
@@ -42,9 +43,9 @@
 |---|---|---|
 | **CCQ** — Commission de la construction du Quebec | Conventions collectives 4 secteurs (residentiel/IC/genie civil/voirie), avantages sociaux, embauche, transferts | https://www.ccq.org |
 | **CCQ — Espace employeurs** | Declaration mensuelle des heures, retenues, paiements employeurs | https://www.ccq.org/fr-ca/employeurs |
-| **CCQ — Carnets de competence** | Verifier le carnet d'un compagnon ou apprenti avant embauche | https://www.ccq.org/fr-ca/main-d-oeuvre |
-| **CCQ — Certificats et formations** | Liste des certificats obligatoires par metier + calendrier formation continue | https://www.ccq.org/fr-ca/formation |
-| **Emploi-Quebec — Construction** | Offres d'emploi, programmes apprentissage, soutien embauche | https://www.quebec.ca/emploi |
+| **CCQ — Main-d'oeuvre** | Verification des carnets, certificats par metier | https://www.ccq.org/fr-ca/main-d-oeuvre |
+| **CCQ — Formation** | Liste des certificats et formations par metier | https://www.ccq.org/fr-ca/formation |
+| **Quebec.ca — Emploi** | Aide a l'embauche, programmes apprentissage, subventions salariales | https://www.quebec.ca/emploi |
 
 ---
 
@@ -52,8 +53,7 @@
 
 | Organisme | Pourquoi c'est utile | URL |
 |---|---|---|
-| **CNESST** — Sante, securite, normes du travail | Cotisations, declaration d'accident, dossier d'employeur, normes du travail | https://www.cnesst.gouv.qc.ca |
-| **CNESST — Espace employeur** | Mutuelles de prevention, dossiers de reclamation, expertises medicales | https://www.cnesst.gouv.qc.ca/fr/organisation/services/espace-employeur |
+| **CNESST** — Sante, securite, normes du travail | Cotisations, declaration d'accident, dossier d'employeur, normes du travail. Acceder a l'Espace employeur via le menu connexion. | https://www.cnesst.gouv.qc.ca/fr |
 | **ASP Construction** | Association sectorielle paritaire — formations SST obligatoires (cours Sante securite chantiers de construction, cadenassage, espaces clos, etc.) | https://www.asp-construction.org |
 | **CCHST** — Centre canadien d'hygiene et securite | Fiches signaletiques SIMDUT, guides outils, statistiques | https://www.cchst.ca |
 
@@ -63,10 +63,9 @@
 
 | Ressource | Pourquoi c'est utile | URL |
 |---|---|---|
-| **Revenu Quebec — Entreprises** | TPS/TVQ, retenues a la source, declarations mensuelles, attestation Revenu Quebec | https://www.revenuquebec.ca/fr/entreprises |
-| **Revenu Quebec — Attestation** | Obligatoire pour soumissions publiques au-dessus du seuil et certains contrats prives | https://www.revenuquebec.ca/fr/entreprises/taxes/contrats-de-construction-attestation-de-revenu-quebec |
-| **ARC — Entreprises** | TPS federale, retenues T4/T4A, IS societes | https://www.canada.ca/fr/agence-revenu/services/impot/entreprises.html |
-| **Revenu Quebec — Sous-traitance construction** | Declaration TP-1086.R.23.12 (paiements sous-traitants) annuelle | https://www.revenuquebec.ca/fr/entreprises/taxes/contrats-de-construction-renseignements-paiements-sous-traitants |
+| **Revenu Quebec — Entreprises** | TPS/TVQ, retenues a la source, declarations mensuelles, attestation Revenu Quebec, declarations sous-traitance construction (TP-1086.R.23.12) | https://www.revenuquebec.ca/fr/entreprises |
+| **ARC — Agence du revenu du Canada** | TPS federale, retenues T4/T4A, IS societes. Note : peut etre lent au premier chargement. | https://www.canada.ca/fr/agence-revenu.html |
+| **Revenu Quebec — Citoyens** | TPS/TVQ pour particuliers, simulateurs d'impot | https://www.revenuquebec.ca/fr/citoyens |
 
 ---
 
@@ -74,11 +73,8 @@
 
 | Plateforme | Pourquoi c'est utile | URL |
 |---|---|---|
-| **SEAO** — Systeme electronique d'appel d'offres | Appels d'offres publics (gouvernement, municipal, sante, education, societes d'Etat). Source #1 pour soumission. | https://www.seao.ca |
-| **AMP** — Autorite des marches publics | Probite des contrats publics, plaintes, autorisations de contracter | https://www.amp.quebec |
-| **AMP — Registre des entreprises non admissibles (RENA)** | Verifier qu'un sous-traitant n'est pas frappe d'inadmissibilite avant de l'embaucher | https://www.amp.quebec/rena |
-| **AMP — Registre AAC** | Liste des entreprises autorisees a contracter (au-dessus de certains seuils) | https://www.amp.quebec/registres |
-| **MERN — Travaux publics municipaux** | Devis normalises municipaux, normes BNQ-1809 (chaussees) et autres | https://www.bnq.qc.ca |
+| **SEAO** — Systeme electronique d'appel d'offres | Appels d'offres publics (gouvernement, municipal, sante, education, societes d'Etat). Source #1 pour soumission. Note : site lent au premier chargement. | https://www.seao.ca |
+| **AMP** — Autorite des marches publics | Probite des contrats publics, plaintes, autorisations de contracter, registres RENA et AAC accessibles via le menu | https://www.amp.quebec |
 
 ---
 
@@ -87,12 +83,11 @@
 | Programme | Pourquoi c'est utile | URL |
 |---|---|---|
 | **Investissement Quebec** | Pret, garantie de pret, capital pour PME industrielles ou exportatrices | https://www.investquebec.com |
-| **Hydro-Quebec — Programmes affaires** | Subventions efficacite energetique batiments, recharge VE, electrification | https://www.hydroquebec.com/affaires |
-| **Transition energetique Quebec / MELCCFP** | Subventions Renoclimat, Chauffez vert, Roulez vert pour clients residentiels (utile pour vos devis) | https://transitionenergetique.gouv.qc.ca |
-| **SHQ** — Societe d'habitation du Quebec | Programmes d'aide a la renovation residentielle (RenoRegion, AccesLogis, etc.) | https://www.habitation.gouv.qc.ca |
-| **MEI — Programmes PME** | Aide a l'innovation, automatisation, productivite, Industrie 4.0 | https://www.economie.gouv.qc.ca |
-| **Services Quebec — Subvention salariale** | Aide a l'embauche / formation pour groupes cibles | https://www.quebec.ca/emploi/aide-financiere-formation |
-| **Plan quebecois des infrastructures (PQI)** | Carnet de commande gouvernemental sur 10 ans — utile pour cibler les marches | https://www.quebec.ca/gouvernement/politiques-orientations/plan-quebecois-infrastructures |
+| **Hydro-Quebec — Affaires** | Subventions efficacite energetique batiments, recharge VE, electrification | https://www.hydroquebec.com/affaires |
+| **Transition energetique Quebec** | Subventions Renoclimat, Chauffez vert, Roulez vert | https://transitionenergetique.gouv.qc.ca |
+| **Habitation Quebec (SHQ)** | Programmes d'aide a la renovation residentielle (RenoRegion, AccesLogis, etc.) | https://www.habitation.gouv.qc.ca |
+| **Ministere de l'Economie** | Aide a l'innovation, automatisation, productivite, Industrie 4.0 | https://www.economie.gouv.qc.ca |
+| **Plan quebecois des infrastructures (PQI)** | Carnet de commande gouvernemental — chercher "PQI" sur le site | https://www.quebec.ca |
 
 ---
 
@@ -103,7 +98,7 @@
 | **Code de construction du Quebec** | Adoption quebecoise du CNB avec modifications. Reference legale pour tout chantier. | https://www.rbq.gouv.qc.ca/lois-reglements-et-codes |
 | **Code de securite du Quebec** | Exigences post-construction (entretien, securite incendie, ascenseurs) | https://www.rbq.gouv.qc.ca/lois-reglements-et-codes |
 | **CNB / CNRC** — Code national du batiment | Source federale, base du code quebecois | https://nrc.canada.ca/fr/certifications-evaluations-normes/codes-canada |
-| **BNQ** — Bureau de normalisation du Quebec | Normes quebecoises (BNQ-1809 chaussees, BNQ-3019 stationnement, etc.) | https://www.bnq.qc.ca |
+| **BNQ** — Bureau de normalisation du Quebec | Normes quebecoises (BNQ-1809 chaussees, BNQ-3019 stationnement, etc.). Note : si la racine ne repond pas, chercher BNQ via Google. | https://www.bnq.qc.ca |
 | **CSA Group** | Normes canadiennes (electrique CSA-C22.1, soudure W-59, beton A23, etc.) | https://www.csagroup.org |
 | **ULC** — Underwriters Laboratories Canada | Normes incendie (portes coupe-feu, gicleurs, alarmes) | https://canada.ul.com |
 
@@ -113,12 +108,12 @@
 
 | Registre | Pourquoi c'est utile | URL |
 |---|---|---|
-| **REQ** — Registre des entreprises | Recherche, immatriculation, declaration annuelle, mise a jour des dirigeants | https://www.registreentreprises.gouv.qc.ca |
+| **REQ** — Registre des entreprises | Recherche, immatriculation, declaration annuelle, mise a jour des dirigeants. Note : site impose une connexion pour la plupart des recherches. | https://www.registreentreprises.gouv.qc.ca |
 | **Verif licence RBQ** | Verifier rapidement la categorie/sous-categorie d'une licence | https://www.rbq.gouv.qc.ca/services-en-ligne/licence/registre-des-detenteurs-de-licence |
-| **AMP — RENA** | Inadmissibilite contrats publics (5 ans typique) | https://www.amp.quebec/rena |
+| **AMP** — Probite | RENA et AAC accessibles via le menu de amp.quebec | https://www.amp.quebec |
 | **CCQ — Verifier carnet** | Carnet de competence valide par metier | https://www.ccq.org/fr-ca/main-d-oeuvre |
 | **OIQ — Tableau des membres** | Verifier qu'un ingenieur est membre en regle | https://www.oiq.qc.ca/membres |
-| **OAQ — Tableau des architectes** | Verifier qu'un architecte est membre en regle | https://www.oaq.com/membres |
+| **OAQ — Membres** | Verifier qu'un architecte est membre en regle | https://www.oaq.com |
 
 ---
 
@@ -127,12 +122,12 @@
 | Association | Pourquoi c'est utile | URL |
 |---|---|---|
 | **ACQ** — Association de la construction du Quebec | Negocie conventions IC + voirie/genie civil. Contrats types, formations gestionnaires, reseautage | https://www.acq.org |
-| **APCHQ** — Association des professionnels de la construction et de l'habitation du Quebec | Negocie convention residentielle. Garantie de maison neuve. Formations gestion residentielle | https://www.apchq.com |
+| **APCHQ** — Association des professionnels de la construction et de l'habitation du Quebec | Negocie convention residentielle. Garantie de maison neuve. Formations gestion residentielle. Annuaire d'entrepreneurs accessible via le menu. | https://www.apchq.com |
 | **CMMTQ** — Corporation des maitres mecaniciens en tuyauterie | Plomberie/chauffage. Licence specialisee, code mecanique batiment | https://www.cmmtq.org |
 | **CMEQ** — Corporation des maitres electriciens du Quebec | Electricite. Licence specialisee, code de l'electricite | https://www.cmeq.org |
-| **CETAQ** — Corporation des entrepreneurs en travaux d'aqueduc et d'egout | Travaux civils municipaux | https://www.cetaq.com |
+| **CETAQ** — Corporation des entrepreneurs en travaux d'aqueduc et d'egout | Travaux civils municipaux | https://cetaq.com |
 | **AECQ** — Association des entrepreneurs en construction du Quebec | Cote employeurs pour negociation conventions construction | https://www.aecq.org |
-| **CIQ** — Conseil interprofessionnel du Quebec | Carrefour des 46 ordres professionnels (utile pour identifier ordres pertinents) | https://www.professions-quebec.org |
+| **CIQ** — Conseil interprofessionnel du Quebec | Carrefour des 46 ordres professionnels | https://www.professions-quebec.org |
 
 ---
 
@@ -143,8 +138,8 @@
 | **OAQ** — Ordre des architectes du Quebec | Plans architecturaux pour batiments soumis a la Loi sur les architectes (selon superficie/usage) | https://www.oaq.com |
 | **OIQ** — Ordre des ingenieurs du Quebec | Plans, calculs et signatures structurales/mecaniques/electriques pour batiments soumis a la Loi sur les ingenieurs | https://www.oiq.qc.ca |
 | **OTPQ** — Ordre des technologues professionnels du Quebec | Releves, plans techniques, surveillance dans champ d'exercice | https://www.otpq.qc.ca |
-| **OAGBRN** — Ordre des arpenteurs-geometres | Certificat de localisation, piquetage, plans cadastraux | https://www.oagq.qc.ca |
-| **OUQ** — Ordre des urbanistes du Quebec | Etudes d'impact, modifications zonage | https://www.ouq.qc.ca |
+| **OAGQ** — Ordre des arpenteurs-geometres | Certificat de localisation, piquetage, plans cadastraux | https://oagq.qc.ca |
+| **OUQ** — Ordre des urbanistes du Quebec | Etudes d'impact, modifications zonage | https://ouq.qc.ca |
 
 ---
 
@@ -167,9 +162,9 @@
 |---|---|---|
 | **Constructo** — Magazine et portail | Veille sectorielle, actualites, fiches techniques, salaire moyen par metier | https://www.portailconstructo.com |
 | **Voir vert** | Construction durable, LEED, batiments performants | https://www.voirvert.ca |
-| **Esquisses (OAQ)** | Magazine d'architecture quebecoise | https://www.esquisses.oaq.com |
-| **Statistique Quebec — Construction** | Indices de prix, mises en chantier, statistiques main-d'oeuvre | https://statistique.quebec.ca/fr/sujets-statistiques/economie/construction |
-| **CanaData / ConstructConnect** | Mises en chantier nationales (donnees agregees) | https://www.constructconnect.com/canada |
+| **Esquisses** | Magazine d'architecture quebecoise | https://www.esquisses.com |
+| **Statistique Quebec** | Indices de prix, mises en chantier, statistiques main-d'oeuvre. Chercher "construction" sur le site. | https://statistique.quebec.ca |
+| **ConstructConnect Canada** | Mises en chantier nationales (donnees agregees) | https://canada.constructconnect.com |
 
 ---
 
@@ -181,38 +176,36 @@
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
-| **Jabacus** | Calculateurs CCQ payants — paie 4 secteurs, charges sociales, transferts entre secteurs, vacances, simulation soumission. Standard de facto chez les entrepreneurs QC. | https://www.jabacus.com |
+| **Jabacus** | Calculateurs CCQ payants — paie 4 secteurs, charges sociales, transferts entre secteurs, vacances, simulation soumission. Standard de facto chez les entrepreneurs QC. | https://jabacus.com |
 | **CalculConversion** | Calculatrices gratuites Quebec : paie nette, TPS/TVQ, charges sociales, hypotheque, commissions. Pratique pour estimations rapides. | https://www.calculconversion.com |
-| **CCQ — Calculateurs officiels** | Calcul de vacances, retenues d'avantages sociaux, transferts entre secteurs (source officielle CCQ) | https://www.ccq.org/fr-ca/main-d-oeuvre |
-| **WEBRAS — Revenu Quebec** | Calcul officiel des retenues a la source provinciales (impot, RRQ, RQAP, FSS). Mise a jour annuelle. | https://www.revenuquebec.ca/fr/sepf/services/sgp_webras |
-| **ARC — Calculatrice de retenues** | Equivalent federal de WEBRAS (impot federal, AE, RPC) | https://www.canada.ca/fr/agence-revenu/services/impot/entreprises/sujets/retenues-paie/calculatrices.html |
-| **Calculatrice TPS/TVQ — Revenu Quebec** | Calculer TPS/TVQ a partir d'un montant avec ou sans taxes | https://www.revenuquebec.ca/fr/citoyens/situations-particulieres/taxes-tps-tvq/calculer-tps-tvq |
+| **CCQ — Calculateurs** | Calcul de vacances, transferts, retenues d'avantages sociaux (acceder via le menu Main-d'oeuvre ou Employeurs) | https://www.ccq.org |
+| **Revenu Quebec — Entreprises** | Acces a Mon dossier entreprises (WEBRAS — calcul officiel des retenues a la source provinciales), declarations TPS/TVQ | https://www.revenuquebec.ca/fr/entreprises |
+| **ARC — Calculatrices de retenues** | Equivalent federal de WEBRAS (impot federal, AE, RPC). Acceder via le menu Calculatrices. | https://www.canada.ca/fr/agence-revenu.html |
 
 ### 13.2 Calcul construction et estimation
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
 | **Engineering ToolBox** | Tables techniques exhaustives (charges, sections d'acier, isolation, ventilation, etc.). Anglais mais incontournable. | https://www.engineeringtoolbox.com |
-| **APCHQ — Outils membres** | Calculateurs prix de revient residentiel, gabarits soumissions (acces membres) | https://www.apchq.com |
-| **Hydro-Quebec — Dimensionnement** | Calculateur de calibre de panneau electrique residentiel, simulateur consommation | https://www.hydroquebec.com/residentiel/outils |
-| **Calculatrice charge tributaire** | Pour soumissions IC: calcul des charges sociales applicables selon le secteur CCQ | https://www.ccq.org/fr-ca/employeurs |
+| **APCHQ** | Outils membres : calculateurs prix de revient residentiel, gabarits soumissions (acces membres) | https://www.apchq.com |
+| **Hydro-Quebec — Outils residentiels** | Calculateur de calibre de panneau electrique residentiel, simulateur consommation | https://www.hydroquebec.com |
 
 ### 13.3 Conversions et utilitaires
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
-| **CalculConversion — Mesures** | Conversions imperial/metrique, surfaces, volumes, materiaux | https://www.calculconversion.com/conversions-mesures.html |
+| **CalculConversion** | Conversions imperial/metrique, surfaces, volumes, materiaux, accessible via le menu | https://www.calculconversion.com |
 | **Convertworld** | Conversions exhaustives (anglais/francais) | https://www.convertworld.com/fr |
 | **Banque du Canada — Taux de change** | Pour soumissions avec materiaux importes USD | https://www.banqueducanada.ca/taux/taux-de-change |
-| **Bureau du surintendant des institutions financieres — Cautionnement** | Reference pour cautionnements de soumission/execution | https://www.osfi-bsif.gc.ca |
+| **BSIF — Cautionnement** | Bureau du surintendant des institutions financieres — reference pour cautionnements de soumission/execution | https://www.osfi-bsif.gc.ca |
 
 ### 13.4 Geomatique et localisation
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
-| **Quebec — Carte interactive (zonage)** | Reglements municipaux, zonage, plans d'urbanisme | https://www.donneesquebec.ca |
-| **Infrastructure Canada — Cartes investissements** | Voir les projets d'infrastructure planifies pres de chez vous | https://www.infrastructure.gc.ca/map-carte/index-fra.html |
-| **BAnQ — Cartes anciennes** | Recherche historique de proprietes pour due diligence en renovation/agrandissement | https://www.banq.qc.ca |
+| **Donnees Quebec** | Donnees ouvertes : zonage, plans d'urbanisme municipaux, cadastre | https://www.donneesquebec.ca |
+| **Infrastructure Canada** | Carte interactive des projets d'infrastructure planifies | https://www.infrastructure.gc.ca |
+| **BAnQ** — Bibliotheque et Archives nationales | Cartes anciennes pour due diligence en renovation/agrandissement | https://www.banq.qc.ca |
 
 ---
 
@@ -223,11 +216,9 @@
 | Plateforme | Modele | URL |
 |---|---|---|
 | **SoumissionRenovation.ca** | Mise en relation client-entrepreneur, paiement par lead | https://www.soumissionrenovation.ca |
-| **Soumission123** | Mise en relation, plusieurs categories construction | https://www.soumission123.ca |
 | **HomeStars** | Annuaire reviews + demande de soumission, fort en Ontario mais present au QC | https://www.homestars.com |
 | **SmartReno** | Demande de soumission, marche QC | https://www.smartreno.com |
-| **Trouver un entrepreneur — APCHQ** | Annuaire officiel APCHQ | https://www.apchq.com/trouver-un-entrepreneur |
-| **GoSoumissionner** | Mise en relation residentiel/commercial | https://www.gosoumissionner.com |
+| **APCHQ** — Annuaire entrepreneurs | Annuaire officiel APCHQ, accessible via le menu | https://www.apchq.com |
 
 ---
 
@@ -239,11 +230,11 @@ Si vous ne devez en garder que dix au quotidien :
 |---|---|---|
 | 1 | RBQ services en ligne | https://www.rbq.gouv.qc.ca/services-en-ligne |
 | 2 | CCQ employeurs | https://www.ccq.org/fr-ca/employeurs |
-| 3 | CNESST espace employeur | https://www.cnesst.gouv.qc.ca/fr/organisation/services/espace-employeur |
+| 3 | CNESST | https://www.cnesst.gouv.qc.ca/fr |
 | 4 | Revenu Quebec entreprises | https://www.revenuquebec.ca/fr/entreprises |
 | 5 | SEAO | https://www.seao.ca |
-| 6 | AMP — RENA | https://www.amp.quebec/rena |
-| 7 | Jabacus (calculs CCQ) | https://www.jabacus.com |
+| 6 | AMP | https://www.amp.quebec |
+| 7 | Jabacus | https://jabacus.com |
 | 8 | CalculConversion | https://www.calculconversion.com |
 | 9 | Verif licence RBQ | https://www.rbq.gouv.qc.ca/services-en-ligne/licence/registre-des-detenteurs-de-licence |
 | 10 | LegisQuebec | https://www.legisquebec.gouv.qc.ca |
@@ -256,7 +247,9 @@ Cette page est independante de la constante `LIENS_UTILES` du frontend (`ERP_REA
 
 Pour proposer un ajout, ouvrir une issue dans `ConstructoAI/Documents` avec le label `liens-utiles`.
 
-**Avertissement** : les URLs sont valides au moment de la publication mais les organismes restructurent leurs sites regulierement. Si un lien ne fonctionne plus, la racine du domaine reste votre meilleure porte d'entree. Pour les outils payants (Jabacus, APCHQ membres), un compte est requis.
+**Note sur les URLs** : les liens ont ete testes le 2026-05-01. La plupart pointent vers la racine du domaine plutot que vers une sous-page profonde, car les organismes restructurent regulierement leurs sites et les URLs profondes deviennent obsoletes en quelques mois. Si vous trouvez une URL plus stable, ouvrir une issue.
+
+**Avertissement** : pour les outils payants (Jabacus, APCHQ membres), un compte est requis.
 
 ---
 
