@@ -73,7 +73,7 @@
 
 | Plateforme | Pourquoi c'est utile | URL |
 |---|---|---|
-| **SEAO** — Systeme electronique d'appel d'offres | Appels d'offres publics (gouvernement, municipal, sante, education, societes d'Etat). Source #1 pour soumission. Note : site lent au premier chargement. | https://www.seao.ca |
+| **SEAO** — Systeme electronique d'appel d'offres | Appels d'offres publics (gouvernement, municipal, sante, education, societes d'Etat). Source #1 pour soumission. Note : site lent au premier chargement. | https://seao.gouv.qc.ca |
 | **AMP** — Autorite des marches publics | Probite des contrats publics, plaintes, autorisations de contracter, registres RENA et AAC accessibles via le menu | https://www.amp.quebec |
 
 ---
@@ -232,7 +232,7 @@ Si vous ne devez en garder que dix au quotidien :
 | 2 | CCQ employeurs | https://www.ccq.org/fr-ca/employeurs |
 | 3 | CNESST | https://www.cnesst.gouv.qc.ca/fr |
 | 4 | Revenu Quebec entreprises | https://www.revenuquebec.ca/fr/entreprises |
-| 5 | SEAO | https://www.seao.ca |
+| 5 | SEAO | https://seao.gouv.qc.ca |
 | 6 | AMP | https://www.amp.quebec |
 | 7 | Jabacus | https://jabacus.com |
 | 8 | CalculConversion | https://www.calculconversion.com |
