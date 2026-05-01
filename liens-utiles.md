@@ -1,6 +1,6 @@
 # Liens utiles — Construction Quebec
 
-> **Version** : 2.4
+> **Version** : 2.5
 > **Date** : 2026-05-01
 > **Cadrage** : reference curated des ressources vraiment utiles pour un entrepreneur en construction au Quebec — organismes officiels, registres, achats publics, lois, normes, formation, financement, calculateurs et veille sectorielle.
 > **Liens valides** : URLs testees et corrigees le 2026-05-01.
@@ -184,6 +184,7 @@
 
 | Outil | Pourquoi c'est utile | URL |
 |---|---|---|
+| **Jabacus** | Calculateurs structuraux en ligne (poutres, colonnes, dalles, fondations, charges combinees) — utilise par les ingenieurs civils canadiens. Anglais. | https://jabacus.com |
 | **Engineering ToolBox** | Tables techniques exhaustives (charges, sections d'acier, isolation, ventilation, etc.). Anglais mais incontournable. | https://www.engineeringtoolbox.com |
 | **APCHQ** | Outils membres : calculateurs prix de revient residentiel, gabarits soumissions (acces membres) | https://www.apchq.com |
 | **Hydro-Quebec — Outils residentiels** | Calculateur de calibre de panneau electrique residentiel, simulateur consommation | https://www.hydroquebec.com |
