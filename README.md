@@ -2,14 +2,14 @@
 
 > **Logiciel de gestion intégré pour entreprises de construction au Québec**
 > **Date** : 2026-04-26
-> **Version** : 2.0 (29 modules — couverture menu sidebar complète, audit QA validé)
+> **Version** : 2.0 (30 modules — couverture menu sidebar complète + Métré ; audit QA validé sur les 29, Métré en v1.0)
 > **Public cible** : utilisateurs finaux (chefs de projet, gestionnaires, comptables, employés terrain, administrateurs)
 
 ---
 
 ## État de la documentation
 
-Ce dossier contient les **29 manuels utilisateur** couvrant l'ensemble du menu sidebar de l'ERP Constructo.
+Ce dossier contient **30 manuels utilisateur** : les 29 couvrant le menu sidebar + le module **Métré** (onglet de Soumissions).
 
 | Statut | Signification |
 |---|---|
@@ -51,6 +51,7 @@ Ce dossier contient les **29 manuels utilisateur** couvrant l'ensemble du menu s
 | 07 | **Dossiers** (Fiche 360) | [07-ventes-dossiers.md](./07-ventes-dossiers.md) |
 | 08 | **Soumissions** (Devis) | [08-ventes-soumissions.md](./08-ventes-soumissions.md) |
 | 09 | **Projets** | [09-ventes-projets.md](./09-ventes-projets.md) |
+| 30 | **Métré** (prise de quantités sur PDF — onglet de Soumissions) | [30-metre-pdf.md](./30-metre-pdf.md) |
 
 ### Opérations
 
@@ -106,7 +107,7 @@ Ce dossier contient les **29 manuels utilisateur** couvrant l'ensemble du menu s
 
 ## Total documentation
 
-- **29 manuels** en français Québec
+- **30 manuels** en français Québec
 - **~960 KB** de documentation utilisateur professionnelle
 - **100% couverture** du menu sidebar de l'ERP
 - **Zéro hallucination** — chaque affirmation traçable jusqu'au code source
@@ -149,7 +150,7 @@ Ordre suggéré pour découvrir l'ERP :
 | Si vous êtes... | Modules prioritaires |
 |---|---|
 | **Chef de projet** | Projets (09), Suivi/Gantt (03), Bons de Travail (12), Dossiers (07), Pointage (13), Météo (16) |
-| **Estimateur** | Soumissions (08), Magasin (10), Calculateurs (26), Assistant IA (25) |
+| **Estimateur** | Soumissions (08), **Métré (30)**, Magasin (10), Calculateurs (26), Assistant IA (25) |
 | **Comptable** | Comptabilité (15), Bons de Commande (14), Tableau de bord (01), Analyses (02), Subventions (18) |
 | **Magasinier / Acheteur** | Magasin (10), Bons de Commande (14), Logistique (20), Maintenance (22) |
 | **Contremaître** | Bons de Travail (12), Pointage (13), Employés (11), Dossiers (07), Météo (16) |
@@ -165,7 +166,8 @@ Ordre suggéré pour découvrir l'ERP :
 - **Cycle achat** : Bons de Commande (14) → Magasin (10) → Comptabilité (15)
 - **Cycle terrain** : Projets (09) → Bons de Travail (12) → Pointage (13) → Météo (16) → Logistique (20) → Maintenance (22)
 - **Conformité légale Québec** : Conformité RBQ/CCQ (17) + Subventions (18) + Employés (11)
-- **Outils** : Calculateurs (26) + Web (27) + Assistant IA (25)
+- **Outils** : Métré (30) + Calculateurs (26) + Web (27) + Assistant IA (25)
+- **Chiffrage / takeoff** : Métré (30) → Soumissions (08) → Projets (09)
 
 ---
 
@@ -224,4 +226,4 @@ Ordre suggéré pour découvrir l'ERP :
 
 ---
 
-*ERP Constructo — README documentation utilisateur — 2026-04-26 — v2.0 (29 modules, audit QA validé, nommage intuitif par section)*
+*ERP Constructo — README documentation utilisateur — v2.0 (29 modules audit QA validé) + Métré (30, v1.0) — màj 2026-06-20*
