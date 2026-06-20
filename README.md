@@ -2,14 +2,14 @@
 
 > **Logiciel de gestion intégré pour entreprises de construction au Québec**
 > **Date** : 2026-04-26
-> **Version** : 2.0 (30 modules — couverture menu sidebar complète + Métré ; audit QA validé sur les 29, Métré en v1.0)
+> **Version** : 2.0 (31 modules — couverture menu sidebar complète + Métré + DAO ; audit QA validé sur les 29, Métré en v1.0, DAO en v2.0)
 > **Public cible** : utilisateurs finaux (chefs de projet, gestionnaires, comptables, employés terrain, administrateurs)
 
 ---
 
 ## État de la documentation
 
-Ce dossier contient **30 manuels utilisateur** : les 29 couvrant le menu sidebar + le module **Métré** (onglet de Soumissions).
+Ce dossier contient **31 manuels utilisateur** : les 29 couvrant le menu sidebar + le module **Métré** (onglet de Soumissions) + le module **DAO / Modélisation 3D** (section Outils).
 
 | Statut | Signification |
 |---|---|
@@ -90,6 +90,7 @@ Ce dossier contient **30 manuels utilisateur** : les 29 couvrant le menu sidebar
 |---|---|---|
 | 26 | **Calculateurs** | [26-outils-calculateurs.md](./26-outils-calculateurs.md) |
 | 27 | **Web** (recherche intégrée) | [27-outils-web.md](./27-outils-web.md) |
+| 31 | **DAO / Modélisation 3D** | [31-outils-dao-modelisation.md](./31-outils-dao-modelisation.md) |
 
 ### Configuration
 
@@ -107,7 +108,7 @@ Ce dossier contient **30 manuels utilisateur** : les 29 couvrant le menu sidebar
 
 ## Total documentation
 
-- **30 manuels** en français Québec
+- **31 manuels** en français Québec
 - **~960 KB** de documentation utilisateur professionnelle
 - **100% couverture** du menu sidebar de l'ERP
 - **Zéro hallucination** — chaque affirmation traçable jusqu'au code source
@@ -150,7 +151,7 @@ Ordre suggéré pour découvrir l'ERP :
 | Si vous êtes... | Modules prioritaires |
 |---|---|
 | **Chef de projet** | Projets (09), Suivi/Gantt (03), Bons de Travail (12), Dossiers (07), Pointage (13), Météo (16) |
-| **Estimateur** | Soumissions (08), **Métré (30)**, Magasin (10), Calculateurs (26), Assistant IA (25) |
+| **Estimateur** | Soumissions (08), **Métré (30)**, Magasin (10), Calculateurs (26), DAO / Modélisation 3D (31), Assistant IA (25) |
 | **Comptable** | Comptabilité (15), Bons de Commande (14), Tableau de bord (01), Analyses (02), Subventions (18) |
 | **Magasinier / Acheteur** | Magasin (10), Bons de Commande (14), Logistique (20), Maintenance (22) |
 | **Contremaître** | Bons de Travail (12), Pointage (13), Employés (11), Dossiers (07), Météo (16) |
@@ -166,8 +167,9 @@ Ordre suggéré pour découvrir l'ERP :
 - **Cycle achat** : Bons de Commande (14) → Magasin (10) → Comptabilité (15)
 - **Cycle terrain** : Projets (09) → Bons de Travail (12) → Pointage (13) → Météo (16) → Logistique (20) → Maintenance (22)
 - **Conformité légale Québec** : Conformité RBQ/CCQ (17) + Subventions (18) + Employés (11)
-- **Outils** : Métré (30) + Calculateurs (26) + Web (27) + Assistant IA (25)
+- **Outils** : DAO / Modélisation 3D (31) + Métré (30) + Calculateurs (26) + Web (27) + Assistant IA (25)
 - **Chiffrage / takeoff** : Métré (30) → Soumissions (08) → Projets (09)
+- **Conception / modélisation 3D** : DAO (31) → rendu IA → export GLB / PDF
 
 ---
 
@@ -226,4 +228,4 @@ Ordre suggéré pour découvrir l'ERP :
 
 ---
 
-*ERP Constructo — README documentation utilisateur — v2.0 (29 modules audit QA validé) + Métré (30, v1.0) — màj 2026-06-20*
+*ERP Constructo — README documentation utilisateur — v2.0 (29 modules audit QA validé) + Métré (30, v1.0) + DAO / Modélisation 3D (31, v2.0) — màj 2026-06-20*
