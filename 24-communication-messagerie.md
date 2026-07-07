@@ -1,423 +1,503 @@
-# Module 24 — Messagerie (Chat interne Teams-like)
+# Module 24 — Messagerie interne
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/messaging.py` (502 lignes, 11 endpoints, **router sans prefix** — `tags=["Messaging"]` monte sous `/api/erp/v1`), `frontend/src/pages/MessagingPage.tsx`, `frontend/src/api/messaging.ts`
-> **Tables PostgreSQL (par tenant)** : `conference_channels`, `conference_messages`, `conference_reactions`, `conference_members` (declaree mais non utilisee par le router actuel), `conference_notifications` (declaree mais non utilisee), `notifications`
-> **Cadrage** : ce module est un **chat interne Teams-like** — canaux thematiques, messages texte simples, reactions emoji, threading basique. Le code est derive des modules legacy `conference_manager/` (canaux) et `direct_messages.py` (DM), mais la **partie messages directs (DM)** est **non operationnelle** dans cette version (tables non provisionnees, endpoints retournent HTTP 503).
+> **Version** : 3.0 (refonte vérifiée ligne par ligne par rapport au code source, 2026-07-07)
+> **Menu** : section « COMMUNICATION » de la barre latérale → **Messagerie** (icône `MessageSquare`) — voisins : **Emails**, **Agent vocal**
+> **Route** : `/messagerie`
+> **Code de référence (backend)** : `backend/routers/messaging.py` (1137 lignes, 13 points d'accès — 6 canaux/messages, 3 messages directs inactifs, 4 notifications ; router sans préfixe monté sous `/api/erp/v1`) ; `backend/routers/messagerie_ai.py` (322 lignes, 1 point d'accès `POST /messagerie/ai/chat`, préfixe `/messagerie/ai`)
+> **Code de référence (frontend)** : `frontend/src/pages/MessagingPage.tsx` (502 lignes) ; `frontend/src/components/messaging/MessageAttachments.tsx` (263 lignes) ; `frontend/src/components/messagerie/MessagerieAssistantTab.tsx` (122 lignes) ; `frontend/src/api/messaging.ts` (133 lignes) + `frontend/src/api/messagerieAi.ts`
+> **Libellés** : `i18n/locales/fr/messaging.json` (43 lignes) + `i18n/locales/fr/messagerieAssistant.json` (15 lignes)
+> **Tables PostgreSQL (par tenant)** : `conference_channels`, `conference_messages`, `conference_reactions`, `conference_members`, `conference_attachments`, `notifications`
+> **Cadrage** : messagerie d'équipe interne de type Teams / Slack, propre à chaque entreprise (tenant). Des **canaux** (`#`) contenant un **fil de messages** chronologique, avec **réactions émoji** et **pièces jointes**. S'y ajoutent un **Assistant IA en lecture seule** (résumé et recherche des messages) et un système de **notifications** distinct (la cloche du bandeau supérieur, hors de cette page). Côté web, c'est surtout un **client léger de consultation et de participation** : la création de canaux privés, l'envoi de pièces jointes, l'édition et la suppression de messages sont assurés par l'**application mobile**, qui partage les mêmes tables.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface (chat 2 colonnes)](#2-interface-chat-2-colonnes)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference](#4-reference)
-5. [Integrations & FAQ](#5-integrations-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
 ### 1.1 Mission du module
 
-Offrir un **chat interne** entre les utilisateurs du meme tenant, sur le modele Microsoft Teams / Slack :
-- **Canaux thematiques** (`#general`, `#chantier-rive-sud`, etc.) avec messages publics
-- **Messages texte** simples avec auto-scroll, recherche locale, polling 30 secondes
-- **Reactions emoji** (toggle add/remove) avec compteurs et indicateur « ma reaction »
-- **Threading basique** via le champ `parent_message_id` (lien parent->enfant en base, **pas d UI threading dedie** dans la page actuelle)
-- **Notifications** systeme legeres (cloche d alerte sur la sidebar — table `notifications` du tenant)
+La Messagerie interne offre à tous les utilisateurs d'une même entreprise un espace d'échange rapide, sur le modèle de Microsoft Teams ou Slack :
 
-### 1.2 Ce que le module ne fait PAS
+- **Canaux thématiques** (`#general`, `#chantier-rive-sud`, `#soumissions`, etc.) contenant des messages texte.
+- **Réactions émoji** sur chaque message (six émojis rapides), en bascule (on ajoute ou on retire d'un clic).
+- **Pièces jointes** (images et fichiers) affichées dans le fil, avec une visionneuse d'images plein écran et le téléchargement des fichiers.
+- **Assistant IA** en lecture seule, ouvert dans une fenêtre modale, qui résume un canal, retrouve un message ou compte l'activité, en s'appuyant sur les messages réels de l'entreprise.
+- **Recherche** locale dans le canal courant.
 
-> **Important** : c est un chat **basique** — pas un Teams complet. Il **n implemente pas** :
-- **Messages directs (DM)** : endpoints `/direct-messages` presents : `POST /direct-messages` (envoi) et `PUT /direct-messages/{id}/read` retournent HTTP 503 (table `direct_messages` non provisionnee). `GET /direct-messages` retourne un stub `{items: [], unread_count: 0}` (pas 503, mais aucune donnee) (table non provisionnee)
-- **Membres de canaux** : table `conference_members` non exploitee par le router -> `member_count` hardcode `0` (ligne 66)
-- **Canaux prives** : champ `is_private` accepte au create mais non lu par le SELECT
-- **Archivage / desactivation** : pas d endpoint pour basculer `is_active = FALSE`
-- **Edition / suppression** de message ou de canal (colonnes `is_edited`, `is_deleted`, `edited_at` declarees mais aucun endpoint UPDATE/DELETE)
-- **Mentions @utilisateur** : pas de parsing `@nom`, pas de notification automatique
-- **Pieces jointes / fichiers partages** : colonne `has_attachments` existe mais aucun endpoint d upload
-- **Statut en ligne** (presence, typing indicator) : aucun
-- **Marquage lu/non lu** par canal (`last_read_at` non exploite, pas de read receipts)
-- **Recherche backend / full-text** : recherche uniquement cote frontend, sur les 50 messages charges
-- **Threads UI** : `parent_message_id` stocke mais affichage a plat (pas de pliage thread)
-- **Notifications push / desktop** (Web Push, browser), **email**, **webhooks externes** (Slack, Teams), **audio/video/appels** : aucun
+C'est un outil de communication **interne à l'entreprise** : il n'est pas destiné aux clients. Les échanges avec les clients passent par les modules CRM (interactions), Emails et le portail B2B.
 
-Pour des fonctions plus riches, considerer une integration externe ou une evolution future.
+### 1.2 Accès et disposition
 
-### 1.3 Acces
+- Barre latérale → section **COMMUNICATION** → **Messagerie** (icône `MessageSquare`), à côté de **Emails** et de **Agent vocal**.
+- URL : `/messagerie`. La page est protégée : il faut être authentifié.
+- **Disposition à 2 volets** (aucun onglet) :
+  1. À gauche, la barre **« Canaux »** (largeur fixe sur écran large).
+  2. À droite, la **zone de messages** (en-tête du canal, fil, zone de saisie).
+- Deux fenêtres modales se superposent au besoin : l'**Assistant IA** et **Nouveau canal**.
+- Hauteur adaptative : `calc(100vh - 120px)` sur mobile, `calc(100vh - 180px)` sur ordinateur.
+- **Adaptatif mobile** : en dessous du seuil `md` (768 px), l'écran affiche soit la liste des canaux, soit le fil du canal choisi, avec un bouton retour.
 
-- Sidebar -> **Messagerie** (icone MessageSquare)
-- URL : `/messagerie` (a verifier selon le routing React Router)
-- Layout : 2 colonnes (sidebar canaux + zone messages plein ecran)
-- Hauteur : `calc(100vh - 120px)` mobile, `calc(100vh - 180px)` desktop
+> **Important — aucun onglet.** La page n'a pas de système d'onglets. Elle a deux volets et deux modales. Les canaux ne sont pas des onglets fixes : ils sont **créés par les utilisateurs** et donc entièrement dynamiques, propres à chaque entreprise.
 
-### 1.4 Permissions
+### 1.3 Permissions
 
-- Tous les utilisateurs authentifies du tenant peuvent :
-  - Lister tous les canaux actifs (pas de filtre membre)
-  - Creer un canal
-  - Lire les messages de n importe quel canal
-  - Poster un message
-  - Reagir avec emoji
-- **Pas de role mod / admin canal** : tous les utilisateurs ont les memes droits.
-- **Notifications** : chaque utilisateur ne voit que ses propres notifications (`WHERE user_id = %s`).
+- Tout utilisateur authentifié de l'entreprise peut : lister les canaux visibles, créer un canal, lire les messages, poster un message, réagir avec un émoji, télécharger une pièce jointe et interroger l'Assistant IA.
+- **Aucun rôle de modérateur ni d'administrateur de canal** n'est requis : tous les utilisateurs ont les mêmes droits d'accès aux canaux publics. Il n'y a pas de garde de rôle (`is_admin`, `comptable`, `super_admin`) sur les points d'accès de la messagerie.
+- **Canaux privés** : leur accès est réservé à leurs membres. L'appartenance à un canal privé est gérée par l'application mobile (voir la section 5.1). Un utilisateur du web qui n'a pas de fiche employé liée ne voit que les canaux **publics** — c'est une dégradation sûre, jamais une fuite.
+- L'**Assistant IA** est ouvert à tout utilisateur authentifié, mais son usage consomme des crédits IA prépayés (voir la section 4.9).
+
+### 1.4 Sous-modules (surfaces de la page)
+
+| Surface | Où | Rôle |
+|---|---|---|
+| Barre « Canaux » | Volet gauche | Liste des canaux, création, ouverture de l'Assistant IA |
+| Zone de messages | Volet droit | En-tête, fil chronologique, réactions, pièces jointes, saisie |
+| Modale « Nouveau canal » | Superposée | Créer un canal (nom + description) |
+| Modale « Assistant IA — Messagerie » | Superposée | Dialogue IA en lecture seule (résumé, recherche) |
+| Notifications (cloche) | **Hors de cette page**, dans le bandeau supérieur | Alertes générées par d'autres modules |
 
 ---
 
-## 2. Interface (chat 2 colonnes)
+## 2. Interface
 
-Source : `MessagingPage.tsx` — composant React unique, pas d onglets.
+### 2.1 Barre latérale « Canaux » (volet gauche)
 
-### 2.1 Sidebar canaux (gauche)
+**En-tête.** Le titre **« Canaux »**, suivi de deux boutons d'action :
 
-Largeur : 64 (16rem) sur desktop, plein ecran sur mobile (avec navigation back).
+- **Assistant IA** (icône `Sparkles`) : ouvre la modale de l'Assistant IA. L'infobulle affiche **« Assistant IA »**.
+- **Nouveau canal** (icône `Plus`) : ouvre la modale de création. L'infobulle affiche **« Nouveau canal »**.
 
-**En-tete** :
-- Titre « Canaux »
-- Bouton **+** (icone Plus) -> ouvre la modale de creation
+**Liste des canaux.** Chaque ligne affiche :
 
-**Liste des canaux** :
-- Chaque entree affiche :
-  - Icone `#` (Hash)
-  - Nom du canal (tronque si long)
-  - Compteur de membres (icone Users + chiffre) — **affiche seulement si > 0**, mais reste toujours `0` car backend hardcode (cf. section 1.2)
-  - Compteur de messages (chiffre seul)
-- Canal actif : surligne en couleur primaire (`seaop-primary`)
-- Click -> charge le canal dans la zone messages
-- Si liste vide : message « Aucun canal »
+- L'icône `#` (dièse) suivie du **nom du canal** (tronqué s'il est long).
+- À droite, deux compteurs discrets :
+  - Le **nombre de membres** (icône `Users` + chiffre), affiché **seulement s'il est supérieur à 0**. Infobulle : « N membre(s) ».
+  - Le **nombre de messages** (chiffre seul), affiché seulement s'il est supérieur à 0.
+- Le canal actif est surligné dans la couleur d'accent.
 
-**Auto-selection** : au premier chargement, le **premier canal de la liste** (ordre alphabetique) est selectionne automatiquement.
+> **Pourquoi « 0 membre » sur un canal que je viens de créer ?** Un canal **public** créé depuis le web n'inscrit aucune ligne de membre : son compteur de membres reste donc à 0, même si toute l'entreprise peut y écrire. L'interface masque simplement le badge quand le compteur vaut 0. Les canaux dont le nombre de membres est visible sont en général des canaux **privés** gérés par l'application mobile.
 
-### 2.2 Zone messages (droite)
+**État vide.** Si aucun canal n'existe encore : **« Aucun canal »**.
 
-#### 2.2.1 En-tete du canal actif
+**Chargement.** Au premier affichage, une roue d'attente occupe l'écran, puis le **premier canal** de la liste (ordre alphabétique) est **sélectionné automatiquement**.
 
-- Bouton retour (`<`) en mode mobile pour revenir a la liste des canaux
-- Icone `#` + nom du canal
-- Badge gris « N membre(s) » (= 0 dans la pratique)
-- **Champ recherche** (a droite) : filtre **client-side** sur le texte des messages charges
-  - Affiche « N resultat(s) pour "..." » au-dessus de la liste filtree
-  - Bouton X pour effacer la recherche
-- Description du canal (si renseignee) en sous-titre
+### 2.2 En-tête du canal actif (volet droit)
 
-#### 2.2.2 Liste des messages
+- Sur mobile, un bouton retour (`ChevronLeft`, infobulle **« Retour aux canaux »**) ramène à la liste.
+- L'icône `#` + le **nom du canal**.
+- Un badge gris **« N membres »** si le canal compte au moins un membre.
+- Un **champ de recherche** (icône `Search`, texte d'invite **« Rechercher... »**) avec un bouton d'effacement `X` (infobulle **« Effacer la recherche »**).
+- La **description** du canal, affichée sous l'en-tête si elle a été renseignée.
 
-- **Pagination** : 50 messages par page (defaut), tries `created_at DESC` puis inverses backend pour affichage chronologique ascendant.
-- **Polling** : `usePolling(fetchMessages, 30000)` -> rafraichit toutes les **30 secondes** tant qu un canal est actif.
-- **Format** : avatar circulaire (premiere lettre du nom), nom auteur (`COALESCE(employees.prenom+nom, users.full_name, users.username)`), date relative, tag « (modifie) » si `isEdited`, texte (`whitespace-pre-wrap`), ligne de reactions (cf. 2.2.3).
+### 2.3 Fil de messages
 
-#### 2.2.3 Reactions emoji
+Le fil est **chronologique et à plat** : les messages les plus anciens en haut, les plus récents en bas. Il n'y a pas de vue en fil de discussion (thread) ni de repli des réponses.
 
-Sous chaque message : **pillules** `emoji + count` (toggler par click). Pillule colore en primaire si `r.mine = true`, grise sinon. Le **quick-react picker** affiche inline les emojis **non encore utilises** (parmi `EMOJI_REACTIONS`), opacite 40% au repos / 100% au hover. Le `pendingReactionsRef` empeche les double-clicks en parallele sur le meme `(messageId, emoji)`.
+**Fenêtre chargée.** Le web charge les **100 messages les plus récents** du canal (constante `MSG_FETCH_LIMIT = 100`). Un nouveau message qui arrive pousse le plus ancien hors de la fenêtre.
 
-**Palette `EMOJI_REACTIONS`** (`MessagingPage.tsx:21`) : `👍 ❤️ 😄 🎉 🤔 👀` — 6 emojis fixes, pas de picker libre. **Limite VARCHAR(10)** en base -> emoji > 10 caracteres rejete avec HTTP 400.
+**Rafraîchissement automatique.** Tant qu'un canal est ouvert, le fil se rafraîchit **toutes les 30 secondes** en arrière-plan (interrogation périodique silencieuse). Si un collègue écrit pendant que vous lisez, son message apparaît en moins de 30 secondes sans action de votre part.
 
-#### 2.2.4 Etats vides
+**Défilement automatique.** À l'ouverture d'un canal, le fil défile instantanément jusqu'au dernier message. À l'arrivée d'un nouveau message en bas, le défilement est fluide. Si vous remontez lire d'anciens messages sans qu'un nouveau n'arrive, la vue ne redescend pas de force.
 
-- **Aucun message dans le canal** : icone MessageSquare + « Aucun message dans #nom » + « Soyez le premier a ecrire! »
-- **Aucun canal selectionne** : icone Hash + « Selectionnez un canal »
+**Contenu d'un message.**
 
-#### 2.2.5 Auto-scroll et saisie
+- Un **avatar** rond (la première lettre du nom de l'auteur).
+- Le **nom de l'auteur**. À défaut, le libellé **« Utilisateur »**.
+- La **date relative** (« il y a 5 min », « hier »...).
+- La mention **« (modifié) »** si le message a été édité (édition faite depuis le mobile).
+- Le **texte** du message, qui conserve les retours à la ligne.
+- Les **pièces jointes** éventuelles (voir la section 2.5).
+- La **ligne de réactions** (voir la section 2.4).
 
-- **Auto-scroll** : changement de canal -> scroll instantane ; nouveau message -> scroll fluide ; scroll manuel sans nouveau message -> pas de re-scroll force.
-- **Champ saisie** : single-ligne, placeholder « Message dans #nom... », **Enter** (sans Shift) envoie, bouton Send desactive si vide.
-- **Bouton emoji** (Smile) a gauche : mini-picker avec les 6 emojis `EMOJI_REACTIONS`, ferme par click outside ou **Escape**, insere a la position du curseur.
+**États particuliers.**
 
-### 2.3 Modale « Nouveau canal »
+- Canal ouvert mais vide : icône `MessageSquare` + **« Aucun message dans #canal »** + **« Soyez le premier à écrire ! »**.
+- Aucun canal sélectionné : icône `Hash` + **« Sélectionnez un canal »**.
 
-Declenchee par le bouton **+**. Champs : **Nom du canal** * (obligatoire, placeholder `general`) et **Description** (optionnelle). Boutons Annuler / Creer (desactive si nom vide).
+### 2.4 Réactions émoji
 
-> Le formulaire ne propose **pas** : selecteur de type (`channel_type` envoye en `'general'` par defaut), toggle `is_private`, ni selecteur de membres (table membres non utilisee).
+Sous chaque message figurent des **pastilles** `emoji + nombre`. Un clic bascule votre réaction :
 
-### 2.4 Notifications (cloche)
+- Si vous n'aviez pas encore réagi avec cet émoji, il est **ajouté** (infobulle **« Ajouter une réaction »**).
+- Si vous aviez déjà réagi, il est **retiré** (infobulle **« Retirer ma réaction »**). Vos propres réactions sont surlignées dans la couleur d'accent.
 
-La page `/messagerie` n affiche pas la cloche elle-meme, mais le module fournit les endpoints qui alimentent un **composant cloche global** (layout sidebar) :
-- `GET /notifications/count` -> compteur `unread` (badge rouge sur la cloche)
-- `GET /notifications` -> liste les N dernieres (defaut 20, max 50) avec champ `link` cliquable
-- `PUT /notifications/{id}/read` -> marque comme lue
+Au survol d'un message, un **sélecteur rapide** affiche les émojis **non encore utilisés** sur ce message, en transparence, pour réagir en un clic.
+
+**Émojis disponibles (six, fixes)** : 👍 ❤️ 😄 🎉 🤔 👀. La même palette sert aux réactions et au sélecteur de la zone de saisie. Il n'y a pas de sélecteur d'émoji libre.
+
+Une protection empêche le double-clic accidentel sur la même réaction (verrou synchrone côté interface), et la base impose l'unicité `(message, utilisateur, emoji)` : on ne peut pas poser deux fois le même émoji sur un message.
+
+### 2.5 Pièces jointes
+
+Les pièces jointes sont **écrites par l'application mobile** ; le web les **affiche et les télécharge** (lecture seule). Le composant récupère chaque fichier par un appel authentifié, sans URL publique.
+
+- **Images** : miniatures de 96 × 96 pixels. Un clic ouvre une **visionneuse plein écran** avec :
+  - Navigation **Précédente / Suivante** entre les images du message (flèches à l'écran ou touches ← et →).
+  - Fermeture par le bouton `X` ou la touche Échap.
+  - Un compteur « i / N » quand il y a plusieurs images.
+  - En cas d'échec de chargement : **« Image indisponible »**.
+- **Fichiers non-image** (PDF, Word, Excel...) : une carte téléchargeable affichant une icône selon le type (`FileText` pour PDF et Word, `FileSpreadsheet` pour Excel, icône générique sinon), le nom du fichier et sa taille (« o », « Ko », « Mo »), avec une icône `Download`. Un clic télécharge le fichier.
+
+> **Limite de téléchargement : 25 Mo** par pièce jointe. Les images d'un type sûr (JPEG, PNG, GIF, WebP, AVIF) sont servies en affichage direct ; tout le reste est forcé en téléchargement, avec les en-têtes de sécurité appropriés (anti-détournement de type, politique de contenu restrictive).
+
+### 2.6 Zone de saisie
+
+En bas du volet droit :
+
+- Un **bouton émoji** (icône `Smile`, infobulle **« Ajouter un émoji »**) ouvre un petit sélecteur des six émojis. L'émoji choisi est inséré **à la position du curseur** dans le texte. Le sélecteur se ferme par un clic à l'extérieur ou la touche Échap.
+- Un **champ texte** (invite **« Message dans #canal... »**). L'envoi se fait par la touche **Entrée** (sans Maj).
+- Un **bouton d'envoi** (icône `Send`, infobulle **« Envoyer »**), désactivé si le champ est vide ou si un envoi est déjà en cours. Une protection anti-double-envoi empêche l'envoi en double sur un appui répété.
+
+> **Un seul type d'envoi depuis le web : du texte (et des émojis).** On ne peut pas joindre de fichier depuis le web : les pièces jointes sont ajoutées par l'application mobile. Voir la section 5.1.
+
+### 2.7 Modale « Nouveau canal »
+
+Ouverte par le bouton `Plus`. Deux champs :
+
+- **« Nom du canal * »** (obligatoire, invite « general »). Longueur maximale : 100 caractères.
+- **« Description »** (facultatif, invite « Description du canal... »). Longueur maximale : 2000 caractères.
+
+Boutons : **« Annuler »** et **« Créer »**. Une protection anti-double-création empêche de créer deux canaux identiques sur un double-clic.
+
+> **Aucune option « privé » ni « type » dans le formulaire web.** Le canal créé depuis le web est toujours **public** : le formulaire n'envoie que le nom et la description. La création de canaux privés se fait dans l'application mobile.
+
+### 2.8 Modale « Assistant IA — Messagerie »
+
+Ouverte par le bouton `Sparkles` de la barre « Canaux ». C'est une **fenêtre modale** (et non un onglet, malgré son libellé interne).
+
+- **Titre** : **« Assistant IA — Messagerie »**.
+- **Sous-titre** : **« Consulte, résume et retrouve tes messages et canaux (lecture seule). »**
+- **Écran d'accueil** : un texte d'invite précisant que l'assistant lit vos messages réels, n'envoie aucun message et n'accède ni aux comptes utilisateurs ni aux données de paie ou de ressources humaines. Trois **exemples cliquables** sont proposés :
+  1. « Résume les derniers messages du canal Projet. »
+  2. « Y a-t-il des messages qui mentionnent une livraison ? »
+  3. « Combien de canaux et de messages avons-nous ? »
+- **Saisie** : une zone de texte (invite « Pose ta question sur la messagerie… »). L'envoi se fait par **Entrée** ; **Maj + Entrée** insère un retour à la ligne.
+- Pendant le traitement : l'indicateur **« Analyse en cours… »**.
+- En cas de problème : **« Une erreur est survenue. Réessaie. »**
+- **Réponses** : présentées en bulles, avec des métadonnées (profil « Messagerie », nombre de jetons, coût, durée).
+
+L'assistant est en **lecture seule** : il peut lire le contenu des messages et des canaux, mais il n'écrit rien et n'envoie aucun message. Son périmètre de lecture est strictement limité aux canaux, messages, membres et réactions ; il n'a accès ni aux comptes, ni à la paie, ni aux données sensibles (voir la section 4.8).
+
+### 2.9 Notifications (la cloche du bandeau — hors de cette page)
+
+La messagerie **n'affiche pas la cloche elle-même** : celle-ci vit dans le bandeau supérieur (`TopBar`), sur toutes les pages. Le module Messagerie fournit néanmoins les points d'accès qui l'alimentent :
+
+- Une **cloche** (`Bell`) avec un badge rouge indiquant le nombre de notifications non lues (plafonné à l'affichage « 99+ »).
+- Un menu déroulant intitulé **« Notifications »**, avec un bouton **« Tout marquer lu »** et la liste des dernières notifications (titre, message, date relative, point pour les non lues).
+- Le compteur est réinterrogé **toutes les 60 secondes** ; la liste (20 éléments au maximum) est chargée à l'ouverture du menu. Un clic marque la notification comme lue et navigue vers le lien associé.
+
+> **Attention — les notifications ne concernent PAS les messages de canal.** La cloche est un système générique alimenté par **d'autres modules** (devis, factures, courriels). **Poster un message dans un canal ne génère aucune notification**, et il n'existe aucun système de mention `@utilisateur`. Voir la section 5.2.
 
 ---
 
-## 3. Workflows pas-a-pas
+## 3. Workflows pas à pas
 
-### 3.1 Creer un nouveau canal
+### 3.1 Ouvrir un canal et lire les messages
 
-1. Sidebar -> bouton **+** (en haut a droite de la liste des canaux).
-2. Modale s ouvre.
-3. Saisir le **Nom** (ex. `chantier-rive-sud`).
-4. Optionnellement : saisir une **Description** (ex. « Suivi quotidien projet Rive-Sud »).
-5. Cliquer **Creer**.
-6. `POST /channels` avec `{name, description, channel_type: 'general' (defaut), is_private: false (defaut)}`.
-7. Backend : INSERT dans `conference_channels` avec `created_by = user_id`, `is_active = TRUE`, `created_at = CURRENT_TIMESTAMP`.
-8. Le canal apparait dans la sidebar (la liste est rechargee via `fetchChannels()`).
-
-> **Note** : aucun mecanisme « inviter des membres » apres creation. Tous les utilisateurs du tenant voient le canal automatiquement.
+1. Ouvrir **Messagerie** (menu latéral, section COMMUNICATION).
+2. Au chargement, le premier canal est sélectionné automatiquement ; son fil s'affiche.
+3. Pour changer de canal, cliquer sur un autre canal dans la barre de gauche. Le champ de recherche se réinitialise et le fil défile jusqu'au dernier message.
+4. Le fil se rafraîchit tout seul toutes les 30 secondes.
 
 ### 3.2 Envoyer un message
 
-1. Cliquer sur un canal dans la sidebar -> chargement des messages.
-2. Saisir le texte dans le champ « Message dans #nom... ».
-3. **Enter** (ou clic sur le bouton Send).
-4. `POST /channels/{channel_id}/messages` avec `{messageText, parentMessageId (null pour message racine)}`.
-5. Backend INSERT dans `conference_messages` -> retourne `id`.
-6. Le frontend appelle `fetchMessages()` -> reaffichage de la liste.
+1. Sélectionner le canal voulu.
+2. Cliquer dans le champ **« Message dans #canal... »** et saisir le texte.
+3. (Facultatif) Cliquer l'icône `Smile` pour insérer un émoji à la position du curseur.
+4. Appuyer sur **Entrée** (ou cliquer le bouton `Send`).
+5. Le message part vers `POST /channels/{id}/messages` ; le fil se rafraîchit en silence et affiche votre message.
 
-> **Polling 30s** : si un autre utilisateur poste pendant que vous lisez, son message apparaitra dans 30 secondes max sans action de votre part.
+> Limite : un message fait au maximum 10 000 caractères (au-delà, l'envoi est refusé avec une erreur de validation).
 
-### 3.3 Inserer un emoji dans le message
+### 3.3 Réagir à un message
 
-1. Cliquer sur l icone Smile a gauche du champ texte -> mini-picker apparait.
-2. Cliquer sur un emoji dans le picker (👍 ❤️ 😄 🎉 🤔 👀).
-3. L emoji est insere a la position du curseur dans l input.
-4. Le picker se ferme automatiquement.
-5. Continuer a taper, puis **Enter** pour envoyer.
+1. Survoler le message : les émojis non encore utilisés apparaissent en transparence.
+2. Cliquer un émoji pour **ajouter** votre réaction, ou cliquer une pastille déjà surlignée pour **retirer** la vôtre.
+3. Le compteur se met à jour au rafraîchissement suivant.
 
-> **Pas de selecteur emoji complet** (Apple/Twitter/Native) — seulement les 6 emojis rapides.
+### 3.4 Créer un canal
 
-### 3.4 Reagir a un message avec un emoji
+1. Cliquer le bouton `Plus` de la barre « Canaux ».
+2. Saisir un **Nom** (par exemple `chantier-rive-sud`).
+3. (Facultatif) Saisir une **Description** (par exemple « Suivi quotidien du projet Rive-Sud »).
+4. Cliquer **« Créer »**.
+5. Le canal, **public**, apparaît dans la liste. Tous les utilisateurs de l'entreprise le voient et peuvent y écrire ; aucune invitation n'est nécessaire.
 
-1. Survoler un message -> les emojis disponibles (parmi `EMOJI_REACTIONS` non encore utilises) passent en opacite 100%.
-2. Cliquer un emoji -> `POST /channels/{channel_id}/messages/{message_id}/reactions` avec `{emoji}`.
-3. Backend (toggle) :
-   - Verifie que le message existe et appartient au canal -> sinon HTTP 404.
-   - Tente DELETE de la reaction `(message_id, user_id, emoji)` -> si elle existait, retourne `action: "removed"`.
-   - Sinon INSERT (avec `ON CONFLICT DO NOTHING`) -> retourne `action: "added"`.
-4. Frontend appelle `fetchMessages()` -> re-render avec compteur a jour.
-
-**Pour retirer une reaction** : cliquer sur une pillule qui contient deja moi (`r.mine = true`, surlignee en primaire). Le compteur baisse de 1, et si c etait la derniere instance de cet emoji, la pillule disparait.
-
-> **Limite emoji** : 10 caracteres max (VARCHAR(10) en base) — couvre la majorite des emojis Unicode mais pas les sequences ZWJ longues.
+> Astuce : pour un échange à deux, créez simplement un canal dédié (par exemple `coordo-marie-jean`). Les messages directs privés ne sont pas offerts depuis le web (voir la section 5.4).
 
 ### 3.5 Rechercher dans un canal
 
-1. Selectionner un canal.
-2. Champ **Rechercher...** en haut a droite.
-3. Saisir un mot-cle.
-4. Filtrage **instantane cote frontend** : la liste affichee est filtree (`messageText.toLowerCase().includes(search.toLowerCase())`).
-5. Compteur « N resultat(s) pour "..." » s affiche au-dessus.
-6. Bouton **X** pour effacer la recherche et revoir tous les messages.
+1. Sélectionner un canal.
+2. Saisir un mot-clé dans le champ **« Rechercher... »** de l'en-tête.
+3. Le fil se filtre **instantanément**. Un compteur « N résultat(s) pour "..." » s'affiche, sous la mention **« Recherche dans les messages chargés »**.
+4. Cliquer le bouton `X` pour revenir au fil complet.
 
-> **Limitation** : la recherche ne porte **que sur les 50 messages charges** (page courante). Les anciens messages ne sont pas inclus tant que la pagination n a pas charge plus de pages. Le module **n a pas** de pagination « charger plus » dans la version actuelle.
+> **La recherche est locale** : elle ne porte que sur les messages déjà chargés (la fenêtre des 100 plus récents). Elle ne remonte pas dans tout l'historique du canal.
 
-### 3.6 Naviguer entre canaux
+### 3.6 Consulter une pièce jointe
 
-1. Dans la sidebar, cliquer sur un autre canal.
-2. Les messages du nouveau canal sont charges via `GET /channels/{id}/messages`.
-3. Le champ de recherche est **reinitialise** (`setMessageSearch('')`).
-4. Auto-scroll instantane vers le bas.
-5. Le polling redemarre sur le nouveau canal.
+1. Dans le fil, repérer les miniatures d'images ou les cartes de fichier sous un message.
+2. Cliquer une miniature pour ouvrir la **visionneuse plein écran** ; naviguer avec les flèches ← / → ; fermer avec Échap.
+3. Cliquer une carte de fichier pour **télécharger** le document (PDF, Word, Excel...).
 
-### 3.7 Mode mobile (responsive)
+### 3.7 Interroger l'Assistant IA
 
-- **Vue par defaut** : sidebar canaux plein ecran.
-- Click sur un canal -> bascule vers la zone messages plein ecran.
-- Bouton **<** (ChevronLeft) en haut a gauche de l en-tete -> retour a la liste des canaux.
-- Le breakpoint est **md** (768px Tailwind).
+1. Cliquer le bouton `Sparkles` de la barre « Canaux ».
+2. Dans la modale, saisir une question (ou cliquer un exemple).
+3. Appuyer sur **Entrée**. L'indicateur « Analyse en cours… » apparaît.
+4. L'assistant répond en s'appuyant sur les messages réels de votre entreprise. Chaque réponse consomme des crédits IA (voir la section 4.9).
 
-### 3.8 Marquer une notification comme lue
+> Exemples utiles : « Résume ce qui s'est dit cette semaine dans #chantier-rive-sud », « Trouve les messages qui parlent de béton », « Combien de messages a-t-on échangés au total ? »
 
-1. (Cote layout global) Click sur la cloche -> dropdown avec liste des notifications via `GET /notifications`.
-2. Click sur une notification -> generalement :
-   - Navigue vers `link` (URL interne, ex. `/projets/123`).
-   - Appelle `PUT /notifications/{id}/read`.
-3. Backend : `UPDATE notifications SET is_read = TRUE WHERE id = %s AND user_id = %s`.
-4. Le compteur cloche se decremente.
+### 3.8 Naviguer sur mobile
 
-### 3.9 Workflows non operationnels (limites importantes)
+1. À l'ouverture, la liste des canaux occupe tout l'écran.
+2. Cliquer un canal bascule vers son fil, plein écran.
+3. Le bouton retour (`ChevronLeft`, « Retour aux canaux ») ramène à la liste.
 
-- **Messages directs (DM)** : `POST /direct-messages` retourne **HTTP 503** « Service de messages directs temporairement indisponible. » (table `direct_messages` non provisionnee). `GET /direct-messages` retourne un stub `{items: [], unread_count: 0}`. **Contournement** : creer un canal a deux participants (ex. `dm-marie-jean`).
-- **Mentions @utilisateur** : pas de parsing `@nom`, pas de notification automatique. Si vous tapez `@Marie`, le texte est envoye tel quel.
-- **Partager un fichier** : aucun bouton « Joindre fichier » ni endpoint upload. **Contournement** : Module 8 Dossiers (uploader, copier l URL, coller comme texte) ou Module 25 IA (`/ai/analyze-document` pour analyse).
+### 3.9 Traiter une notification (cloche du bandeau)
+
+1. Cliquer la cloche du bandeau supérieur (présente sur toutes les pages).
+2. Le menu « Notifications » liste les dernières alertes.
+3. Cliquer une notification la marque comme lue et ouvre l'élément lié (un devis, une facture, un courriel...).
+4. Le bouton « Tout marquer lu » vide le badge d'un coup.
 
 ---
 
-## 4. Reference
+## 4. Référence
 
-### 4.1 Endpoints Messagerie (`tags=["Messaging"]`, prefix global `/api/erp/v1`)
+### 4.1 Points d'accès — canaux et messages (`messaging.py`)
 
-| Methode | URL                                                       | Role                                              |
-|---------|-----------------------------------------------------------|---------------------------------------------------|
-| GET     | `/channels`                                               | Liste les canaux actifs (`is_active = TRUE`)      |
-| POST    | `/channels`                                               | Creer un canal                                    |
-| GET     | `/channels/{channel_id}/messages`                         | Liste les messages (page=1, perPage=50 max 100)   |
-| POST    | `/channels/{channel_id}/messages`                         | Poster un message (avec `parent_message_id` opt.) |
-| POST    | `/channels/{channel_id}/messages/{message_id}/reactions`  | Toggle reaction emoji (add/remove)                |
-| GET     | `/direct-messages`                                        | **Stub** : retourne `{items: [], unread_count: 0}` |
-| POST    | `/direct-messages`                                        | **HTTP 503** (non operationnel)                   |
-| PUT     | `/direct-messages/{message_id}/read`                      | **HTTP 503** (non operationnel)                   |
-| GET     | `/notifications`                                          | Liste notifications (par defaut 20, max 50)       |
-| PUT     | `/notifications/{notification_id}/read`                   | Marquer notification comme lue                    |
-| GET     | `/notifications/count`                                    | Compteur des notifications non lues               |
+Tous exigent un jeton JWT valide et un contexte tenant (`user.schema`) ; sinon **400 « Contexte tenant manquant »**. Aucun n'impose de rôle particulier. Préfixe global : `/api/erp/v1`.
 
-### 4.2 Modeles Pydantic (entree)
+| Méthode | URL | Rôle |
+|---|---|---|
+| GET | `/channels` | Liste les canaux actifs ; masque les canaux privés dont l'appelant n'est pas membre ; renvoie le nombre réel de membres et de messages |
+| POST | `/channels` | Crée un canal (transaction atomique ; persiste `channel_type` et `is_private`) |
+| GET | `/channels/{id}/messages` | Liste les messages (pagination `page` ≥ 1, `per_page` défaut 50, **max 200**) ; enrichit chaque message de ses réactions et pièces jointes |
+| GET | `/channels/attachments/{id}` | Télécharge le binaire d'une pièce jointe (lecture seule) |
+| POST | `/channels/{id}/messages` | Poste un message (valide que `parent_message_id`, s'il est fourni, appartient au même canal) |
+| POST | `/channels/{id}/messages/{mid}/reactions` | Bascule une réaction émoji (ajoute ou retire) |
 
-| Modele                  | Champs                                                               |
-|-------------------------|----------------------------------------------------------------------|
-| `ChannelCreate`         | `name: str`, `description?: str`, `channel_type: str = "general"`, `is_private: bool = False` |
-| `MessageCreate`         | `message_text: str`, `parent_message_id?: int`                       |
-| `ReactionCreate`        | `emoji: str` (1-10 caracteres)                                       |
-| `DirectMessageCreate`   | `recipient_user_id?`, `recipient_entreprise_id?`, `subject?`, `message: str`, `parent_id?` (HTTP 503 cote backend) |
+> Le web charge 100 messages par appel ; le maximum serveur est de 200 par page. Il n'y a pas de bouton « Charger plus d'anciens messages » dans l'interface web.
 
-### 4.3 Tables PostgreSQL (par tenant)
+### 4.2 Points d'accès — messages directs (inactifs)
 
-| Table                     | Role                                                       | Statut module                            |
-|---------------------------|------------------------------------------------------------|------------------------------------------|
-| `conference_channels`     | Canaux : id, name, description, channel_type, icon, is_private, is_active, created_by, created_at | **Utilisee** (CRUD partiel — pas de UPDATE/DELETE) |
-| `conference_messages`     | Messages : id, channel_id, user_id, message_text, parent_message_id, has_attachments, is_edited, is_deleted, created_at, edited_at | **Utilisee** (INSERT + SELECT seulement) |
-| `conference_reactions`    | Reactions : id, message_id, user_id, emoji, created_at + UNIQUE(message_id, user_id, emoji) | **Utilisee** (toggle add/remove)          |
-| `conference_members`      | Membres : id, channel_id, user_id, role, last_read_at      | **Declaree mais non utilisee** par le router |
-| `conference_notifications`| Mentions/notifications par canal                            | **Declaree mais non utilisee** par le router |
-| `notifications`           | Notifications generiques tenant (toutes sources)           | **Utilisee** (GET, PUT read, count)       |
+| Méthode | URL | Comportement réel |
+|---|---|---|
+| GET | `/direct-messages` | Renvoie toujours `{ items: [], unread_count: 0 }` (table absente) |
+| POST | `/direct-messages` | **503** « Service de messages directs temporairement indisponible. » |
+| PUT | `/direct-messages/{id}/read` | **503** (même message) |
 
-### 4.4 Champs response
+> Les messages directs privés ne sont **pas fonctionnels**. Le renvoi d'un code 503 (plutôt qu'un faux 200) évite de laisser croire à une livraison. Il n'existe aucune interface de messages directs dans le web.
 
-**Canal** : `id, name, description, channel_type, is_active, created_at, member_count (hardcode 0), message_count`.
+### 4.3 Points d'accès — notifications (cloche du bandeau)
 
-**Message** : `id, channel_id, user_id, message_text, parent_message_id, is_edited, is_deleted, created_at, edited_at, username, user_name, reactions[]`.
+| Méthode | URL | Rôle |
+|---|---|---|
+| GET | `/notifications` | Liste les notifications de l'utilisateur (`unread_only` optionnel ; `limit` défaut 20, **max 50**) ; renvoie une liste vide si la table n'existe pas |
+| GET | `/notifications/count` | Compteur des non lues (pour la cloche) |
+| PUT | `/notifications/{id}/read` | Marque une notification comme lue |
+| PUT | `/notifications/read-all` | Marque toutes les notifications comme lues |
 
-Chaque entree `reactions[]` : `{emoji, count, mine}` (mine = true si l utilisateur courant a deja reagi avec cet emoji).
+### 4.4 Point d'accès — Assistant IA (`messagerie_ai.py`)
 
-**Resolution du nom auteur** (SQL ligne 151) : `COALESCE(e.prenom || ' ' || e.nom, u.full_name, u.username)` -> employes (JOIN sur `m.user_id = e.id`), puis `users.full_name`, puis `users.username`.
+| Méthode | URL | Rôle |
+|---|---|---|
+| POST | `/messagerie/ai/chat` | Assistant IA en lecture seule : répond à partir des messages réels ; n'écrit rien, n'envoie aucun message |
 
-### 4.5 Pagination messages
+Paramètres du corps : `message` (1 à 8000 caractères), `history` (40 éléments au maximum, tronqués à 12 tours de conversation côté serveur), `language` (optionnel, FR ou EN). Modèle utilisé : `claude-sonnet-4-6`. Plafond de génération : 8000 jetons. Jusqu'à 5 allers-retours d'outil par réponse.
 
-- Defaut : `page=1, per_page=50`.
-- Max : `per_page=100`.
-- Tri : `ORDER BY created_at DESC LIMIT %s OFFSET %s` -> les **N plus recents** -> puis `messages.reverse()` cote backend pour ordre chronologique.
+### 4.5 Limites de saisie (validation → 422)
 
-> **Limitation UI** : la page React **ne fournit pas** de bouton « Charger plus anciens messages ». Seuls les 50 derniers sont visibles.
+| Champ | Règle |
+|---|---|
+| Nom du canal | 1 à 100 caractères (obligatoire) |
+| Description du canal | 2000 caractères au maximum |
+| Type de canal | 50 caractères au maximum (« general » par défaut) |
+| Texte d'un message | 1 à 10 000 caractères |
+| Émoji d'une réaction | 10 caractères au maximum (colonne `VARCHAR(10)`) |
+| Question à l'Assistant IA | 1 à 8000 caractères |
 
-### 4.6 Validations & limites
+### 4.6 Codes de statut HTTP
 
-| Regle                                        | Effet                                       |
-|----------------------------------------------|---------------------------------------------|
-| `user.schema` absent (pas de tenant)         | HTTP 400 « Contexte tenant manquant »       |
-| `emoji` vide ou > 10 caracteres              | HTTP 400 « Emoji invalide »                 |
-| Reaction sur message inexistant ou supprime  | HTTP 404 « Message introuvable »            |
-| `per_page` > 100 (messages) / `limit` > 50 (notif) | HTTP 422 (Pydantic Query validator)   |
-| POST `/direct-messages` ou PUT read DM       | HTTP 503 (table non provisionnee)           |
-| `notifications` table absente du schema      | Retourne `{items: [], unread_count: 0}` (silent) |
+| Code | Signification dans ce module |
+|---|---|
+| 200 | Succès |
+| 400 | Contexte tenant manquant, schéma de tenant invalide, ou nom de canal vide |
+| 402 | Crédits IA épuisés (Assistant IA) |
+| 403 | Canal privé, appelant non membre (lecture, envoi, réaction) ; ou accès IA refusé |
+| 404 | Message ou canal introuvable ; pièce jointe d'un canal privé non accessible (masquée pour ne pas révéler son existence) |
+| 413 | Pièce jointe dépassant 25 Mo au téléchargement |
+| 422 | Donnée hors bornes (voir la section 4.5) |
+| 503 | Messages directs (toujours) ; ou service IA momentanément indisponible |
 
-### 4.7 Polling et performance
+### 4.7 Émojis, rafraîchissement et constantes
 
-`usePolling(fetchMessages, 30000)` toutes les 30 secondes tant qu un canal est actif. **Pas de WebSocket / SSE** dans cette version. Charge typique : 50 utilisateurs actifs -> ~100 req/min sur `/channels/{id}/messages`.
+| Élément | Valeur | Source |
+|---|---|---|
+| Émojis (réactions et saisie) | 👍 ❤️ 😄 🎉 🤔 👀 (six, fixes) | `MessagingPage.tsx:24` |
+| Messages chargés par le web | 100 (les plus récents) | `MSG_FETCH_LIMIT`, `MessagingPage.tsx:28` |
+| Rafraîchissement du fil | 30 secondes | `MessagingPage.tsx:108` |
+| Rafraîchissement du compteur de la cloche | 60 secondes | `TopBar.tsx` |
+| Pagination serveur des messages | défaut 50, max 200 | `messaging.py:372` |
+| Limite de téléchargement d'une pièce jointe | 25 Mo | `messaging.py:60` |
+| Limite débit de l'Assistant IA | 20 requêtes par IP et par fenêtre | `erp_api.py` |
 
-### 4.8 Constantes UI
+### 4.8 Tables PostgreSQL (par tenant)
 
-| Constante           | Valeur                          | Source                                |
-|---------------------|---------------------------------|---------------------------------------|
-| `EMOJI_REACTIONS`   | `['👍', '❤️', '😄', '🎉', '🤔', '👀']` | `MessagingPage.tsx:21`              |
-| Polling interval    | `30000 ms` (30 sec)            | `MessagingPage.tsx:79`                |
-| Per page (messages) | 50 par defaut, max 100         | `messaging.py:135`                    |
-| Per page (DM)       | 20 par defaut, max 50          | `messaging.py:332` (stub)             |
-| Limit notifications | 20 par defaut, max 50          | `messaging.py:373`                    |
+| Table | Rôle | Qui écrit |
+|---|---|---|
+| `conference_channels` | Canaux : nom, description, type, `is_private`, `is_active`, créateur, date | Web et mobile |
+| `conference_messages` | Messages : canal, auteur, texte, message parent, indicateurs édité/supprimé, dates | Web (envoi) et mobile |
+| `conference_reactions` | Réactions : message, utilisateur, émoji ; unicité `(message, utilisateur, emoji)` | Web et mobile (bascule) |
+| `conference_members` | Membres des canaux privés ; l'appartenance est indexée par identifiant d'employé | Mobile |
+| `conference_attachments` | Pièces jointes (binaire en base) | Mobile (écriture) ; web (lecture seule) |
+| `notifications` | Notifications génériques (cloche) alimentées par d'autres modules | Autres modules (devis, factures, courriels) |
 
-### 4.9 Comportements specifiques
+> **Provisionnement.** Les tables `conference_*` ne sont pas créées par l'initialisation de l'ERP : elles proviennent de l'application mobile et de migrations historiques. L'ERP se contente d'auto-réparer `conference_attachments` (création à la volée si absente). La table `notifications` n'est créée par aucun composant de l'ERP : les points d'accès vérifient son existence et renvoient une liste vide si elle manque. La messagerie web dépend donc d'un schéma provisionné ailleurs.
 
-- **Auto-selection** : au premier chargement, selectionne `res.items[0]` (premier canal alphabetique grace a `ORDER BY c.name ASC`).
-- **Lock anti double-click reactions** : `pendingReactionsRef = new Set<string>()` stocke les cles `${messageId}:${emoji}` en cours.
-- **Race condition INSERT reaction** : si message supprime entre SELECT et INSERT -> FK violation -> rollback + HTTP 404.
-- **Reset tenant systematique** : chaque endpoint suit le pattern `db.set_tenant -> operation -> db.reset_tenant` (garantit l isolation multi-tenant).
+**Whitelist de lecture de l'Assistant IA** : uniquement `conference_channels`, `conference_messages`, `conference_members`, `conference_reactions`. Toute requête nommant `users`, `employees`, la paie, les salaires, le NAS, les courriels, les jetons, Stripe, etc. est **refusée** par un garde-fou. Le moteur de lecture est en transaction en lecture seule, avec délai maximal, limite de résultats automatique et masquage des colonnes sensibles. L'assistant **peut lire le contenu des messages** (décision d'affaires), mais rien d'autre.
+
+### 4.9 Calcul du coût de l'Assistant IA
+
+- L'accès à l'IA est ouvert à tout utilisateur authentifié ; le vrai verrou est le **solde de crédits IA prépayés** : si le solde est vide, la requête est refusée avec **402 « Crédits IA épuisés »**.
+- Coût facturé par requête : `(jetons_entrée × 0,003 + jetons_sortie × 0,015) / 1000 × 1,30`, soit le tarif de référence majoré de **30 %**. Le coût est débité du solde après chaque réponse réussie.
+- Le débit ne comporte **pas de clé d'idempotence** : en cas de nouvel essai réseau ou de double soumission, la requête peut être **débitée deux fois**. La protection anti-double-envoi existe seulement côté interface. Une limite de débit par IP (20 requêtes par fenêtre) réduit ce risque.
+- Si l'abonnement le prévoit, un solde bas déclenche une recharge automatique par Stripe.
+
+### 4.10 Raccourcis clavier
+
+| Contexte | Touche | Effet |
+|---|---|---|
+| Champ de message | Entrée | Envoyer le message |
+| Sélecteur d'émoji | Échap | Fermer le sélecteur |
+| Zone de l'Assistant IA | Entrée | Envoyer la question |
+| Zone de l'Assistant IA | Maj + Entrée | Nouvelle ligne |
+| Visionneuse d'images | ← / → | Image précédente / suivante |
+| Visionneuse d'images | Échap | Fermer la visionneuse |
 
 ---
 
-## 5. Integrations & FAQ
+## 5. Intégrations et FAQ
 
-### 5.1 Integration Notifications (Module 14)
+### 5.1 Intégration avec l'application mobile
 
-La table `notifications` du tenant est **partagee** avec d autres modules (factures, projets, BT, etc.). Le router `messaging.py` se contente de **lire / marquer lue / compter** — la **creation** se fait dans d autres modules.
+L'application mobile est le **client principal** de la messagerie et partage les mêmes tables. Plusieurs fonctions n'existent que là :
 
-> **Pas de notifications messagerie internes** : aucune INSERT depuis `messaging.py`. Poster un message ou recevoir une reaction n insere **rien** dans `notifications`. La cloche ne sonne pas pour les nouveaux messages chat.
+- **Canaux privés** : leur création et la gestion de leurs membres se font sur mobile. L'appartenance est indexée par identifiant d'employé. Un utilisateur du web sans fiche employé liée ne voit que les canaux publics.
+- **Pièces jointes** : leur ajout se fait sur mobile ; le web les affiche et les télécharge.
+- **Édition et suppression de messages** : disponibles sur mobile ; le web affiche la mention « (modifié) » mais n'offre aucune action d'édition ni de suppression.
+- **Fils de discussion (threads)** : le lien de message parent est stocké et validé côté serveur, mais le web affiche un fil à plat et n'exploite pas les réponses en fil.
 
-### 5.2 Integration Module 9 Employes
+### 5.2 Intégration avec les notifications (cloche du bandeau)
 
-Le nom affiche d un message utilise `JOIN employees e ON m.user_id = e.id` puis `e.prenom || ' ' || e.nom`. Ce JOIN suppose que `users.id == employees.id` ou qu un autre lien implicite existe. Sinon, fallback sur `full_name` ou `username`.
+La table `notifications` est **partagée** et alimentée par d'autres modules : un nouveau devis, une facture, un courriel entrant y déposent une alerte, avec un lien cliquable. Le module Messagerie ne fait que **lire, compter et marquer comme lues** ces notifications. Il n'en **crée aucune** : poster un message de canal ne fait pas sonner la cloche, et il n'y a pas de mention `@utilisateur`.
 
-### 5.3 Integration Module 23 Emails et B2B portal
+### 5.3 Intégration avec le module Employés
 
-- **Aucune integration** entre la messagerie interne et le module Emails (Module 25). Pas de notification email sur nouveau message chat.
-- **Hors scope B2B** : la messagerie interne est exclusivement pour les utilisateurs **du tenant** (employes). Les communications clients passent par CRM interactions, emails, B2B portal.
+Le nom affiché comme auteur d'un message provient d'une jointure avec les fiches employé et les comptes utilisateurs de l'entreprise (jointures strictement limitées au schéma du tenant, pour éviter toute fuite de noms entre entreprises). Si aucun nom n'est trouvé, le libellé « Utilisateur » est affiché.
 
-### 5.4 Integration Module 25 IA
+### 5.4 Ce qui n'est pas possible depuis le web
 
-- **Lecture** : l IA peut interroger `conference_messages` via le tool `recherche_bd` (ex. « Combien de messages ai-je poste ce mois ? »).
-- **Ecriture** : l IA peut creer un message via `executer_action` (INSERT dans `conference_messages`). **Aucun garde-fou** : Claude poste directement.
-- Pas d integration native « resumer un canal » dans la page Messagerie.
+- **Messages directs privés** : non fonctionnels (renvoient une liste vide ou un code 503). Solution de contournement : créer un canal dédié à deux personnes.
+- **Envoi de pièces jointes** : réservé au mobile.
+- **Édition ou suppression de messages** : réservées au mobile.
+- **Création de canaux privés** : réservée au mobile.
+- **Mentions `@utilisateur`** : inexistantes.
+- **Export (PDF, CSV) ou impression** d'un canal : aucun.
+- **Statut de présence** (« en ligne », « en train d'écrire »), **accusés de lecture**, **appels audio/vidéo**, **notifications navigateur ou courriel** sur nouveau message : aucun.
+- **Recherche dans tout l'historique** : la recherche web ne porte que sur les 100 messages chargés.
 
 ### 5.5 FAQ
 
-**Q : Puis-je supprimer ou modifier un canal / un message ?**
-R : **Non via l UI ni via le router**. Aucun endpoint UPDATE/DELETE n est expose pour les canaux ou les messages. Les colonnes `is_active`, `is_edited`, `is_deleted`, `edited_at` existent en base mais ne sont jamais modifiees par l app. Workaround : SQL direct (admin DB) ou IA `executer_action` (avec audit).
+**Q : Y a-t-il des onglets dans la Messagerie ?**
+R : Non. La page a deux volets (canaux à gauche, messages à droite) et deux fenêtres modales (Nouveau canal, Assistant IA). Les canaux sont créés par les utilisateurs, ce ne sont pas des onglets fixes.
 
-**Q : Qui voit le canal que je cree ?**
-R : **Tous les utilisateurs du tenant**. Le champ `is_private` est accepte au create mais non lu par le SELECT. Aucune notion de membres exclusifs dans cette version.
+**Q : Qui voit le canal que je crée depuis le web ?**
+R : Tout le monde dans l'entreprise. Les canaux créés depuis le web sont toujours publics. Les canaux privés se créent dans l'application mobile.
 
-**Q : Combien de messages sont charges au demarrage et puis-je voir les anciens ?**
-R : Les **50 plus recents** du canal. Pas de pagination « voir plus anciens » dans l UI actuelle. La recherche se fait uniquement sur ces 50 messages charges.
+**Q : Pourquoi certains canaux affichent « 0 membre » ?**
+R : Un canal public créé depuis le web n'inscrit aucun membre : son compteur reste à 0 (le badge est alors masqué), même si toute l'entreprise peut y écrire. Le nombre de membres est surtout pertinent pour les canaux privés gérés sur mobile.
 
-**Q : Les reactions multiples sur le meme message sont-elles supportees ?**
-R : OUI — un meme utilisateur peut ajouter plusieurs emojis differents. Mais pas **plusieurs fois le meme emoji** (UNIQUE constraint `(message_id, user_id, emoji)`). Le `pendingReactionsRef` cote frontend bloque les double-click rapprochees, et `ON CONFLICT DO NOTHING` cote backend empeche les doublons en cas de race.
+**Q : Puis-je modifier ou supprimer un message depuis le web ?**
+R : Non. L'édition et la suppression se font depuis l'application mobile. Le web affiche la mention « (modifié) » quand un message a été édité.
 
-**Q : Pourquoi je vois « 0 membres » sur tous les canaux ?**
-R : C est par design dans cette version : `member_count` est hardcode a `0` cote backend (ligne 66). La table `conference_members` n est pas exploitee par le router.
+**Q : Puis-je joindre un fichier à un message depuis le web ?**
+R : Non. On peut seulement lire et télécharger les pièces jointes (ajoutées sur mobile). La zone de saisie web n'accepte que du texte et des émojis.
 
-**Q : Le statut « en ligne / occupe / absent » est-il visible ?**
-R : **NON.** Aucun mecanisme de presence dans cette version. Pas d indicateur en ligne, pas de « X est en train d ecrire... », pas de read receipts (« lu par »).
+**Q : La recherche remonte-t-elle tout l'historique ?**
+R : Non. Elle filtre uniquement les messages déjà chargés (les 100 plus récents du canal courant).
 
-**Q : Puis-je epingler un message ou gerer des threads UI ?**
-R : **NON.** Pas de pin/star. Le champ `parent_message_id` est stocke en base mais l UI affiche tous les messages a plat (chronologique, pas de pliage thread).
+**Q : Est-ce que poster un message avertit mes collègues ?**
+R : Non, pas par la cloche de notifications ni par courriel. Vos collègues verront le message en ouvrant le canal ; le fil se rafraîchit tout seul toutes les 30 secondes. Il n'existe pas de mention `@utilisateur`.
 
-**Q : Les emojis sont-ils limites ?**
-R : Limite **VARCHAR(10)** sur le champ `emoji` -> couvre la majorite des emojis Unicode simples. Les sequences ZWJ longues (ex. famille emoji 4 personnages) peuvent etre tronquees -> HTTP 400.
+**Q : Puis-je écrire `@Marie` pour l'alerter ?**
+R : Vous pouvez l'écrire, mais ce n'est que du texte : aucune notification n'est déclenchée. Le système de mentions n'existe pas.
 
-**Q : Le polling 30s consomme-t-il beaucoup ?**
-R : Une requete legere `GET /channels/{id}/messages?per_page=50` ~10-20 KB. 50 utilisateurs actifs = ~100 req/min. Acceptable. Pour un volume eleve, considerer WebSocket/SSE en evolution future.
+**Q : Les messages directs (privés, un à un) fonctionnent-ils ?**
+R : Non depuis le web. Pour un échange restreint, créez un canal dédié.
 
-**Q : Puis-je exporter l historique d un canal ?**
-R : Pas de bouton export. Workaround : copier-coller manuel, ou requete SQL directe (`SELECT * FROM conference_messages WHERE channel_id = X`) en admin.
+**Q : Combien d'émojis de réaction sont disponibles ?**
+R : Six, fixes : 👍 ❤️ 😄 🎉 🤔 👀. On ne peut pas poser deux fois le même émoji sur un message.
 
-**Q : Les messages sont-ils chiffres ?**
-R : Au repos : selon la configuration PostgreSQL Render (chiffrement disque). En transit : HTTPS sur l API. **Pas de chiffrement bout-en-bout** type Signal — les messages sont lisibles en clair par tout admin DB.
+**Q : L'Assistant IA peut-il lire mes messages ? Et voir les salaires ou les mots de passe ?**
+R : Il peut lire le contenu des messages et des canaux de votre entreprise, pour les résumer ou les retrouver. Il **ne peut pas** accéder aux comptes utilisateurs, aux mots de passe, à la paie ni aux ressources humaines : sa lecture est verrouillée aux seules tables de la messagerie.
 
-**Q : Combien de temps les messages sont-ils conserves ?**
-R : **Indefiniment** (pas de purge automatique). Une purge necessiterait un cron job SQL manuel.
+**Q : L'Assistant IA peut-il écrire ou envoyer un message à ma place ?**
+R : Non. Il est strictement en lecture seule : il n'écrit rien et n'envoie aucun message.
 
-**Q : Le module fonctionne-t-il sur mobile ?**
-R : OUI — la page est **responsive** : sidebar plein ecran sur mobile, bascule vers la zone messages au click, bouton retour. Pas d app native iOS/Android dediee.
+**Q : L'Assistant IA coûte-t-il quelque chose ?**
+R : Oui. Chaque réponse consomme des crédits IA prépayés (tarif de référence majoré de 30 %). Si le solde est épuisé, l'assistant répond « Crédits IA épuisés ». Évitez de renvoyer rapidement la même question : un nouvel essai peut être débité une seconde fois.
 
-**Q : Les notifications navigateur (browser push) sont-elles supportees ?**
-R : **NON.** Pas de Service Worker, pas de Web Push, pas de notification email sur nouveau message. La seule notification visuelle est le badge cloche dans l app (alimente par d autres modules).
+**Q : Les messages sont-ils conservés longtemps ?**
+R : Oui, indéfiniment ; il n'y a pas de purge automatique.
 
-**Q : Puis-je integrer un bot dans un canal ?**
-R : Pas d API bot dediee. Workaround : creer un user « bot » et utiliser `POST /channels/{id}/messages` avec son token JWT. L IA Claude peut deja poster via `executer_action` (cf. Module 12).
+**Q : La messagerie fonctionne-t-elle sur téléphone ?**
+R : La page web est adaptée au mobile (liste des canaux, bascule vers le fil, bouton retour). Il existe par ailleurs une **application mobile** dédiée, qui est le client principal et offre les fonctions avancées (canaux privés, pièces jointes, édition, fils de discussion).
 
----
-
-## 6. Recap one-pager
-
-- **Module focus** : chat interne **Teams-like** simple — canaux thematiques + messages texte + reactions emoji + threading basique en base.
-- **11 endpoints** : 5 canaux/messages + 3 DM (non op.) + 3 notifications. Router sans prefix (`tags=["Messaging"]`, monte sous `/api/erp/v1`).
-- **Frontend** : page unique `MessagingPage.tsx`, 2 colonnes (sidebar + messages), responsive mobile.
-- **Polling 30s** pour rafraichir les messages (pas de WebSocket / SSE).
-- **6 emojis fixes** : 👍 ❤️ 😄 🎉 🤔 👀. Toggle reaction (add/remove sur le meme endpoint), UNIQUE `(message_id, user_id, emoji)`, VARCHAR(10).
-- **Auto-selection** : premier canal alphabetique au chargement initial.
-- **Pagination** : 50 msg/page, max 100. **Pas de UI « charger plus anciens »**. Recherche **client-side** sur les 50 msg charges.
-- **Tables actives** : `conference_channels`, `conference_messages`, `conference_reactions`, `notifications`.
-- **Tables inactives (schema only)** : `conference_members`, `conference_notifications`, `direct_messages`.
-- **member_count = 0** hardcode (`conference_members` non exploitee). **DM** non operationnels (HTTP 503).
-- **PAS implemente** : edition/suppression message, archivage canal, mentions @, fichiers joints, presence en ligne, threads UI, marquage lu/non lu, recherche backend, push notifications, email, audio/video, exports, webhooks Slack/Teams.
-- **Notifications cloche** : alimentees par d autres modules — la messagerie elle-meme n insere rien dans `notifications`.
-- **Permissions** : tous les utilisateurs du tenant ont les memes droits (pas de roles canal).
+**Q : Puis-je exporter ou imprimer l'historique d'un canal ?**
+R : Non, aucune fonction d'export ni d'impression n'est prévue.
 
 ---
 
-**Documentation generee a partir du code** : `messaging.py` (502 lignes), `MessagingPage.tsx` (428 lignes), `messaging.ts` (138 lignes).
+## 6. Récapitulatif
 
-**Manuels lies** :
-- Module 9 (Employes — resolution noms auteurs) — `09-employes.md`
-- Module 25 (IA — `executer_action` peut poster un message) — `12-ia.md`
-- Module 28 (Administration — table `notifications` partagee) — `14-administration.md`
-- Module 23 (Emails — distinct de la messagerie interne) — `25-emails.md` (a verifier en prod)
+- **Messagerie d'équipe interne** de type Teams / Slack, propre à chaque entreprise : des canaux, un fil de messages, des réactions émoji, des pièces jointes, un Assistant IA en lecture seule.
+- **Accès** : menu latéral, section COMMUNICATION → Messagerie ; route `/messagerie`.
+- **Disposition à 2 volets** (canaux + messages), **aucun onglet**, plus 2 modales (Nouveau canal, Assistant IA). Les canaux sont dynamiques, créés par les utilisateurs.
+- **Six émojis fixes** : 👍 ❤️ 😄 🎉 🤔 👀 ; réactions en bascule ; unicité `(message, utilisateur, emoji)`.
+- **Le web charge 100 messages** par canal ; rafraîchissement du fil toutes les 30 secondes ; recherche **locale** sur la fenêtre chargée.
+- **Pièces jointes en lecture seule** côté web (écrites par le mobile) : visionneuse d'images plein écran, téléchargement des fichiers, limite de 25 Mo.
+- **Assistant IA** en modale (bouton `Sparkles`) : lecture seule, lit le contenu des messages mais rien de sensible ; modèle `claude-sonnet-4-6` ; coût = tarif de référence + 30 % ; refus à 402 si crédits épuisés ; pas de clé d'idempotence (risque de double débit sur un nouvel essai).
+- **Notifications (cloche)** : système **séparé**, dans le bandeau supérieur, alimenté par d'autres modules (devis, factures, courriels). Poster un message ne crée aucune notification ; pas de mention `@utilisateur`.
+- **Réservé au mobile** : canaux privés, envoi de pièces jointes, édition et suppression de messages, fils de discussion.
+- **Inactif** : messages directs privés (liste vide ou 503).
+- **Permissions** : tout utilisateur authentifié a les mêmes droits ; les canaux privés ne sont visibles que par leurs membres (appartenance gérée sur mobile).
+
+---
+
+**Documentation générée à partir du code vérifié** :
+- `backend/routers/messaging.py` (1137 lignes, 13 points d'accès)
+- `backend/routers/messagerie_ai.py` (322 lignes, 1 point d'accès)
+- `frontend/src/pages/MessagingPage.tsx` (502 lignes)
+- `frontend/src/components/messaging/MessageAttachments.tsx` (263 lignes)
+- `frontend/src/components/messagerie/MessagerieAssistantTab.tsx` (122 lignes)
+- `frontend/src/api/messaging.ts` (133 lignes) + `frontend/src/api/messagerieAi.ts`
+- `frontend/src/i18n/locales/fr/messaging.json` (43 lignes) + `messagerieAssistant.json` (15 lignes)
+
+**Manuels liés** :
+- Module 9 (Employés — résolution des noms d'auteurs) — `09-employes.md`
+- Module 23 (Emails — distinct de la messagerie interne) — `25-emails.md`
+- Module 25 (Assistant IA — moteur de crédits partagé) — `12-ia.md`
+- Module 28 (Administration — table `notifications` partagée, cloche du bandeau) — `14-administration.md`
