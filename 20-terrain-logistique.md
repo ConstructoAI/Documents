@@ -1,709 +1,758 @@
-# Module 20 — Logistique (Livraisons / Flotte / Equipements / Coordination)
+# Module 20 — Logistique et livraisons
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/secondary.py` (section `/logistics/*` lignes 725-3571), `frontend/src/pages/LogistiquePage.tsx` (1373 lignes, 6 onglets), `frontend/src/api/logistics.ts`
-> **Tables PostgreSQL** : `logistics_deliveries`, `logistics_delivery_items`, `logistics_equipment`, `logistics_equipment_reservations`, `logistics_equipment_maintenance`, `logistics_vehicles`, `logistics_vehicle_trips`, `logistics_site_coordination`, `logistics_alerts`
-> **Cadrage** : module **operationnel** logistique chantier (livraisons + flotte + equipements + coordination) pour ERP construction Quebec. Couvre la maintenance des **equipements de la flotte logistique** et les alertes preventives. Pour la maintenance generale chantier (fiches d intervention complexes), voir Module 22 Maintenance. Pour la **location** d equipements aux clients (contrats avec calcul TPS/TVQ), voir Module 21 Location.
-
-
-> **BUG BACKEND signale** : le code backend (`secondary.py:928, 3094, 3352`) interroge `WHERE statut = 'en_maintenance'` alors que le frontend POST `'maintenance'` (sans le prefixe `en_`). Consequence : les KPI 'en_maintenance' comptent toujours 0 sauf si on modifie en BD directement. Bug a corriger cote code (alignement statuts frontend/backend).
+> **Version** : 3.0 (refonte vérifiée ligne par ligne contre le code source du 7 juillet 2026 — corrections majeures : **7 onglets** et non 6 (ajout de l'onglet Assistant IA), l'assistant réellement actif est `/logistique/ai/chat` en **lecture seule** et non les quatre anciens endpoints `/logistics/ia/*` devenus morts, la **détection de chevauchement de réservation existe désormais** (erreur 409), les numéros de référence sont générés contre une contrainte d'unicité et non tirés au hasard, les tables sont créées **à la demande** et non à l'initialisation du tenant, et le contrôle d'accès IA `check_ai_guard` est un **contrôle neutre** — seul le solde de crédits bloque)
+> **Libellé dans le menu** : « Logistique » (groupe « TERRAIN » de la barre latérale, icône `Truck`) — route `/logistique`. Réf. `Sidebar.tsx:74`, `nav.json:24`.
+> **Code de référence (côté serveur)** : le module est réparti sur **trois** routers, il n'existe **aucun** fichier `routers/logistique.py` ni `routers/logistics.py` dédié.
+> &nbsp;&nbsp;• `ERP_REACT/backend/routers/secondary.py` — 37 points d'accès sous `/logistics/*` (33 de gestion + statistiques, plus 4 endpoints IA aujourd'hui **morts**), tables `logistics_*` créées à la demande ;
+> &nbsp;&nbsp;• `ERP_REACT/backend/routers/gps.py` (372 lignes) — 7 points d'accès sous `/gps/*` (flotte GPS) ;
+> &nbsp;&nbsp;• `ERP_REACT/backend/routers/logistique_ai.py` (331 lignes) — 1 point d'accès `POST /logistique/ai/chat` (assistant IA de consultation, **le seul câblé à l'écran**).
+> **Chemins d'API réels** : préfixe `/api/erp/v1` — donc `/api/erp/v1/logistics/*`, `/api/erp/v1/gps/*`, `/api/erp/v1/logistique/ai/chat`.
+> **Code de référence (côté client)** : `ERP_REACT/frontend/src/pages/LogistiquePage.tsx` (1417 lignes, 7 onglets) ; `ERP_REACT/frontend/src/components/logistique/LogistiqueAssistantTab.tsx` (151 lignes, chat IA) ; `ERP_REACT/frontend/src/api/logistics.ts`, `api/gps.ts`, `api/logistiqueAi.ts` ; magasin d'état `store/useLogistiqueStore.ts`.
+> **Tables PostgreSQL** : une série `logistics_*` **par tenant** (`logistics_deliveries`, `logistics_delivery_items`, `logistics_equipment`, `logistics_equipment_reservations`, `logistics_equipment_maintenance`, `logistics_vehicles`, `logistics_vehicle_trips`, `logistics_site_coordination`, `logistics_alerts`) — **créées à la demande**, pas à l'ouverture du tenant. Une série `gps_*` **par tenant** (`gps_vehicle_tracking`, `gps_locations`, `gps_geofences`, `gps_routes`). L'assistant IA écrit dans les tables partagées `public.ai_usage_tracking` (traçage) et `public.ai_prepaid_credits` (débit des crédits).
+> **Cadrage** : registre **opérationnel** léger de la logistique de chantier — livraisons, équipements (avec historique de maintenance), véhicules, activités de coordination de chantier, suivi GPS de flotte (en lecture) — accompagné d'un **assistant IA de consultation** (lecture seule). Ce **n'est pas** un système d'optimisation de tournées, ni un générateur de bons de livraison en PDF, ni un système de notifications poussées. Plusieurs capacités existent côté serveur mais **sans interface** (articles de livraison, réservations d'équipement, trajets de véhicule, création de zones GPS, génération d'alertes) : voir la section 1.3.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface (6 onglets)](#2-interface-6-onglets)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference](#4-reference)
-5. [Integrations & FAQ](#5-integrations-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
 ### 1.1 Mission du module
 
-Couvrir les operations logistiques d un chantier ou d une flotte d entreprise de construction :
+Offrir à une entreprise de construction québécoise un **registre unique de la logistique de chantier** : savoir ce qui doit être livré et quand, quels équipements et véhicules sont disponibles ou en maintenance, quelles activités de coordination sont planifiées sur le terrain (coulée de béton, arrivée de grue, fermeture de rue), et où se trouve la flotte selon les dernières positions GPS.
 
-- **Livraisons** entrantes/sortantes (planification + tracking + items detailles + zones de stockage)
-- **Flotte vehicules** (camionnettes, camions, remorques) avec suivi kilometrage, consommation, deplacements
-- **Equipements** mobiles (grues, excavatrices, betonnieres, generatrices) avec reservations par chantier + historique maintenance
-- **Coordination chantier** (creneaux livraison beton, arrivee grue, coulee, fermeture rue, reunions)
-- **Alertes** preventives (maintenance equipement, inspection, expiration assurance vehicule)
-- **IA Claude** : 4 endpoints dedies (analyser, chat, rapport, optimiser) bases sur prompt expert logistique Quebec
-- **Sous-onglet GPS / Carte** affichant les positions des vehicules connectes (donnees du module GPS, en lecture)
+Concrètement, le module répond à des questions comme :
 
-### 1.2 Ce que le module ne fait PAS
+- « Quelles livraisons sont planifiées cette semaine et où doivent-elles être entreposées ? »
+- « Cette excavatrice est-elle disponible, en utilisation ou en maintenance ? Quand a-t-elle été inspectée pour la dernière fois ? »
+- « Combien de camions sont disponibles et quel est leur kilométrage ? »
+- « Quelles activités faut-il coordonner sur le chantier demain matin ? »
+- « Y a-t-il des alertes logistiques ouvertes ? » (assistant IA)
 
-> **Important** : module **operationnel** focus coordination + suivi quotidien. Il n implemente **pas** :
+### 1.2 Ce que le module fait (vérifié contre le code)
 
-- **Geocoding / routage automatique** livraisons (pas d API Maps)
-- **Optimisation tournees** (TSP, VRP) — IA peut suggerer mais pas calculer mathematiquement
-- **Tracking GPS temps reel** ecrit dans Logistique : lecture GPS vient du module Carte/GPS separe (`/api/gps/*`)
-- **Generation BL PDF** (pas d export imprimable)
-- **Workflow approbation livraison** (pas de roles, pas de signature electronique)
-- **Detection chevauchements** reservations (deux reservations en parallele acceptees sans erreur)
-- **Notifications email/push** (alertes en base seulement)
-- **Calcul automatique** couts carburant total / amortissement vehicule
-- **Codes-barres / QR codes** (champ `code` = identifiant texte, pas visuel)
-- **Multi-localisations** par equipement (un equipement = une `localisation_actuelle` texte)
-- **Synchronisation comptable** des couts vers `journal_entries`
+- **Livraisons** : créer, lister (paginé, 25 par page), rechercher, filtrer par statut, changer le statut en ligne et supprimer des livraisons entrantes ou sortantes. Chaque livraison reçoit une référence unique `LIV-#####` générée par le serveur.
+- **Équipements** : créer, lister, rechercher, filtrer par catégorie et statut, changer le statut en ligne et supprimer des équipements mobiles (grue, excavatrice, bétonnière, génératrice…). Code unique `EQP-#####`.
+- **Maintenance des équipements** : consigner des interventions (préventive, inspection, réparation, certification) sous l'équipement sélectionné, avec coût, technicien, conformité et **prochaine date** qui met automatiquement à jour l'échéance de l'équipement.
+- **Véhicules** : créer, lister, rechercher, filtrer par statut, changer le statut en ligne, mettre à jour le kilométrage et supprimer les véhicules de la flotte. Immatriculation unique.
+- **Coordination de chantier** : planifier des activités datées (livraison de béton, arrivée de grue, coulée, inspection, réunion, fermeture de rue…) avec horaire, zone concernée et responsable. Référence unique `COORD-#####`. **Attention** : cet écran s'affiche sous l'onglet mal nommé « Trajets ».
+- **Tableau de bord** : quatre indicateurs clés (livraisons planifiées, équipements disponibles, véhicules disponibles, alertes actives), trois cartes de détail et la liste des alertes actives (en lecture).
+- **Suivi GPS de la flotte** : consulter la dernière position de chaque véhicule, les lieux enregistrés, les zones (geofences) et les routes du jour — sous forme de **tableaux de coordonnées**, sans carte.
+- **Assistant IA de consultation** : un chat en langage naturel qui **lit** vos données de logistique réelles (livraisons, équipements, véhicules, coordination, alertes) et répond, **sans jamais écrire** ni accéder à la paie ou aux employés.
 
-Pour la facturation des locations aux clients (contrats avec lignes, TPS/TVQ, retours, dommages) : voir Module 21 (Location).
+### 1.3 Ce que le module NE fait PAS (limites importantes)
 
-### 1.3 Acces
+> **À lire avant de vous fier au module.** Plusieurs attentes naturelles ne sont **pas** couvertes par l'interface, et certaines capacités existent côté serveur sans écran pour les utiliser.
 
-- Sidebar -> **Logistique** (icones Truck / Package)
-- URL : `/logistique`
-- 6 onglets (cf. section 2)
-- Onglet par defaut : **Tableau de bord**
+- **Aucune exportation, aucune impression, aucun téléversement de fichier, aucune action groupée** dans tout le module. Pas de bon de livraison en PDF, pas de CSV, pas de pièce jointe.
+- **Pas d'édition complète des fiches.** Sur une livraison, un équipement, un véhicule ou une activité déjà créés, l'interface ne permet que **deux** gestes : changer le **statut** (menu déroulant dans le tableau) et **supprimer**. Il n'existe aucune fenêtre de modification des autres champs (type, zone, coûts, notes…). Corriger une adresse ou un coût oblige à supprimer et recréer.
+- **Articles de livraison sans interface.** Le serveur sait rattacher des lignes détaillées (description, quantités prévue et reçue, unité, conformité) à une livraison, mais **aucun écran** ne permet de les saisir ni de les voir. Le détail d'une livraison ne s'ouvre pas.
+- **Réservations d'équipement sans interface.** Le serveur gère des réservations d'équipement par période — avec **détection de chevauchement** (deux réservations qui se recoupent sont refusées, voir 4.11) — mais **aucun écran** ne permet de créer ou consulter ces réservations.
+- **Trajets de véhicule sans interface.** Le serveur enregistre des déplacements (départ, retour, kilométrage, carburant, coût), mais **aucun écran** ne les affiche ni ne les crée. Malgré les libellés « Trajets » et « GPS / Trajets », le vrai concept de trajet de véhicule n'a **aucun onglet**.
+- **Alertes en lecture seule.** Le tableau de bord affiche les alertes actives, mais il n'y a **aucun bouton** pour les générer ni pour les marquer traitées. La génération automatique (maintenance, inspection, expiration d'assurance) et le traitement existent côté serveur, sans écran.
+- **Pas de carte cartographique.** L'onglet GPS montre des **latitudes et longitudes en texte**, jamais une carte interactive. Les zones (geofences) et les routes sont en lecture seule ; seuls les **lieux** peuvent être ajoutés.
+- **Aucune notification poussée** (courriel, notification navigateur, message texte). Les alertes vivent en base et s'affichent seulement dans le tableau de bord.
+- **Aucune synchronisation comptable ni de stock.** Les coûts (journalier, mensuel, carburant, maintenance) sont **affichés** mais jamais convertis en écritures comptables. Une livraison passée à « livrée » **ne met pas** le stock à jour dans le Magasin.
+- **Assistant IA en lecture seule.** L'assistant **ne crée, ne modifie et ne supprime rien** : il répond à partir de vos données, sans proposer d'action ni écrire en base.
+- **L'onglet Véhicules n'a pas de pagination** (la liste complète est chargée d'un coup), contrairement aux onglets Livraisons, Équipements et Coordination (25 par page).
 
-### 1.4 Permissions
+### 1.4 Accès par le menu latéral
 
-- Tous les utilisateurs authentifies du tenant peuvent CRUD livraisons, equipements, vehicules, coordinations.
-- **IA logistique** : 4 endpoints gardes par `check_ai_guard()` + `_check_credits()`.
-- Pas de roles dedies. Pas de soft-delete.
+- Barre latérale gauche → groupe **TERRAIN** (repliable) → **Logistique** (icône `Truck`). Réf. `Sidebar.tsx:74`.
+- URL directe : `/logistique`.
+- Fil d'Ariane / titre de la page : « Logistique » (le sous-titre « Gestion de la flotte, des livraisons et trajets » existe dans les libellés mais **n'est pas affiché**).
+- **Onglet par défaut** : Tableau de bord.
 
-### 1.5 Modeles IA utilises
+### 1.5 Permissions et rôles
 
-| Endpoint                    | Modele                       | Max tokens | Markup cout |
-|-----------------------------|------------------------------|------------|-------------|
-| `/logistics/ia/analyser`    | `claude-opus-4-20250514`     | 4096       | +30%        |
-| `/logistics/ia/chat`        | `claude-sonnet-4-20250514`   | 4096       | +30%        |
-| `/logistics/ia/rapport`     | `claude-sonnet-4-20250514`   | 8192       | +30%        |
-| `/logistics/ia/optimiser`   | `claude-sonnet-4-20250514`   | 4096       | +30%        |
+Le module distingue nettement la **lecture** (ouverte) de l'**écriture** (réservée à certains rôles).
 
-Cout Opus : `(input * 0.015 + output * 0.075) / 1000 * 1.30` USD.
-Cout Sonnet : `(input * 0.003 + output * 0.015) / 1000 * 1.30` USD.
+| Action | Qui peut la faire |
+|--------|-------------------|
+| **Consulter** (tous les onglets, tous les GET, y compris GPS et statistiques) | Tout utilisateur authentifié du tenant (`get_current_user`). |
+| **Créer / modifier le statut / supprimer** une livraison, un équipement, une maintenance, un véhicule, une activité de coordination | Rôle d'écriture logistique : **administrateur**, **super-administrateur**, **gestionnaire**, **contremaître** ou **magasinier** (`require_tenant_admin_or_role`, `erp_auth.py:720`). Un propriétaire dont le compte porte `is_admin` est toujours autorisé (droit relu au serveur, infalsifiable). Sinon : **403**. |
+| **Ajouter un lieu ou une zone GPS** | **Tout** utilisateur authentifié — les écritures GPS n'ont **aucune** garde de rôle (incohérence connue, voir 4.10). |
+| **Utiliser l'assistant IA** | Tout utilisateur authentifié **ayant des crédits IA** (voir 1.7). |
 
-> Le **chat** + **rapport** + **optimiser** utilisent Sonnet (rapide / abordable). Seul **analyser** utilise Opus (analyse JSON profonde + score 0-100).
+> **Mode consultation (lecture seule) à l'échelle du tenant.** Si l'entreprise n'a pas d'abonnement Stripe actif (abonnement annulé ou absent), tout le tenant passe en **mode consultation** : les lectures restent permises, mais **toute** création, modification ou suppression renvoie **403** (`erp_auth.py:526`). Cela s'applique aussi aux écritures GPS. Voir le module Configuration / Abonnement pour rétablir l'accès.
+
+### 1.6 Les 7 onglets
+
+Source : `LogistiquePage.tsx:117` et `:153-193`. Les compteurs entre parenthèses proviennent des totaux du magasin d'état.
+
+| # | Clé interne | Libellé affiché | Icône | Contenu réel |
+|---|-------------|-----------------|-------|--------------|
+| 1 | `dashboard` | Tableau de bord | `BarChart3` | Indicateurs, détails et alertes actives (lecture) |
+| 2 | `deliveries` | Livraisons (N) | `Package` | Gestion des livraisons |
+| 3 | `equipment` | Équipements (N) | `Wrench` | Gestion des équipements + maintenance |
+| 4 | `vehicles` | Véhicules (N) | `Truck` | Gestion de la flotte |
+| 5 | `coordination` | **Trajets** (N) | `ClipboardList` | **Coordination de chantier** (libellé trompeur, voir 2.6) |
+| 6 | `gps` | **GPS / Trajets** | `MapPin` | Flotte GPS en lecture (+ ajout de lieux) |
+| 7 | `assistant` | Assistant IA | `Sparkles` | Chat de consultation en lecture seule |
+
+> **Deux onglets portent le mot « Trajets », aucun ne gère les trajets de véhicule.** L'onglet 5 (« Trajets ») gère la **coordination de chantier** ; l'onglet 6 (« GPS / Trajets ») gère la **flotte GPS**. Les déplacements de véhicule (départ, retour, carburant) n'ont pas d'écran.
+
+### 1.7 Coûts et facturation (assistant IA seulement)
+
+- **Toute la partie registre est gratuite** : créer et consulter des livraisons, équipements, véhicules, activités et lieux GPS ne consomme aucun crédit.
+- **Seul l'assistant IA est payant.** Chaque message consomme des **crédits IA prépayés** de l'entreprise. Coût = tarif du modèle `claude-sonnet-4-6` (3 $ US par million de jetons en entrée, 15 $ US par million en sortie) **majoré de 30 %**. Le débit est **ferme** (non best-effort) et tracé sous la fonctionnalité `logistique_chat` dans `public.ai_usage_tracking`. Un compte sans crédits reçoit une erreur **402** et ne peut pas envoyer de message ; la consultation logistique, elle, reste gratuite. Détail en section 4.8.
+
+### 1.8 Architecture technique
+
+```
+Frontend LogistiquePage.tsx (7 onglets)
+    │
+    ├── onglets Livraisons/Équip./Véhic./Coordination/Tableau de bord
+    │        └─ api/logistics.ts ──> secondary.py  /api/erp/v1/logistics/*   (33 endpoints + stats)
+    │                                 tables logistics_* (créées à la demande)
+    │
+    ├── onglet GPS / Trajets
+    │        └─ api/gps.ts ─────────> gps.py        /api/erp/v1/gps/*         (7 endpoints, lecture)
+    │                                 tables gps_* (PAS créées à la demande)
+    │
+    └── onglet Assistant IA
+             └─ api/logistiqueAi.ts ─> logistique_ai.py /api/erp/v1/logistique/ai/chat
+                                        Claude sonnet-4-6, outil recherche_bd (lecture seule)
+                                        débit crédits IA + traçage usage
+```
+
+> **Point d'attention pour un tenant neuf.** Les tables `logistics_*` sont créées **à la première utilisation** (à la volée, `_ensure_table`) : un tenant qui n'a encore rien saisi voit des compteurs à **0** et des listes vides — c'est normal. En revanche, `gps.py` **ne crée pas** ses tables à la demande : sur un tenant qui n'a jamais reçu de données GPS, l'onglet GPS peut renvoyer une erreur serveur (voir la FAQ 5.7).
 
 ---
 
-## 2. Interface (6 onglets)
+## 2. Interface
 
-Source : `LogistiquePage.tsx:148-155`.
+Source : `LogistiquePage.tsx` (1417 lignes) et `LogistiqueAssistantTab.tsx` (151 lignes).
 
-| # | Cle             | Label              | Icone        | Contenu principal                                       |
-|---|-----------------|--------------------|--------------| --------------------------------------------------------|
-| 1 | `dashboard`     | Tableau de bord    | BarChart3    | KPI 4 cartes + details 3 cartes + alertes actives       |
-| 2 | `deliveries`    | Livraisons         | Package      | CRUD livraisons (avec items detailles)                  |
-| 3 | `equipment`     | Equipements        | Wrench       | CRUD equipements + reservations + historique maintenance|
-| 4 | `vehicles`      | Vehicules          | Truck        | CRUD vehicules + trips                                  |
-| 5 | `coordination`  | Coordination       | ClipboardList| Activites coordonnees sur chantier                      |
-| 6 | `gps`           | GPS / Carte        | MapPin       | Lecture positions vehicules + lieux + geofences + routes|
+### 2.1 Disposition générale
 
-> Les onglets affichent les compteurs en temps reel (ex. `Livraisons (12)`, `Equipements (8)`).
+```
++-----------------------------------------------------------------------------+
+| Logistique                                                                  |
++-----------------------------------------------------------------------------+
+| [bandeau rouge d'erreur, fermable]   [bandeau vert de succès, fermable]      |
++-----------------------------------------------------------------------------+
+| Tableau de bord | Livraisons (12) | Équipements (8) | Véhicules (5) |        |
+| Trajets (3) | GPS / Trajets | Assistant IA          <- barre d'onglets       |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|                     contenu de l'onglet sélectionné                          |
+|                                                                             |
++-----------------------------------------------------------------------------+
+```
 
-### 2.1 Onglet « Tableau de bord »
+- **Titre** « Logistique » toujours affiché en haut (`:165`).
+- **Bandeau d'erreur** (rouge, fermable) et **bandeau de succès** (vert, fermable) apparaissent au-dessus des onglets après une action. Messages de succès : « Créé avec succès », « Mis à jour avec succès », « Supprimé avec succès ».
+- **Barre d'onglets** défilable horizontalement sur petit écran. L'onglet actif est souligné en bleu.
+- **Adaptatif** : chaque tableau (affichage bureau) se transforme en **cartes empilées** sur téléphone.
 
-Source : `LogistiquePage.tsx:192-283`. Recupere `GET /logistics/statistics` + `GET /logistics/alerts?statut=active`.
+### 2.2 Onglet Tableau de bord
 
-**4 cartes KPI StatCard** : Livraisons planifiees (bleu) / Equipements disponibles (vert) / Vehicules disponibles (teal) / Alertes actives (rouge si > 0, jaune sinon).
+Source : `:200-292`. Charge `GET /logistics/statistics` et `GET /logistics/alerts?statut=active` à l'ouverture.
 
-**3 cartes details secondaires** :
-- Livraisons : planifiees, en_cours, cette_semaine
-- Equipements : disponibles, en_utilisation, maintenance
-- Vehicules : disponibles, en_deplacement, KM total cumule
+**Quatre cartes d'indicateurs** (en haut) :
 
-**Section Alertes actives** : liste des alertes non traitees, triees par priorite. Couleurs : haute = rouge `#E8919A`, moyenne = orange `#F0B07A`, basse = jaune `#F6C87A`. Affiche message + date echeance.
+| Carte | Couleur | Valeur | Sous-texte |
+|-------|---------|--------|------------|
+| Livraisons planifiées | bleu | nombre de livraisons au statut `planifiee` | « Total : {N} » |
+| Équipements disponibles | vert | nombre d'équipements `disponible` | « Total : {N} » |
+| Véhicules disponibles | sarcelle | nombre de véhicules `disponible` | « Total : {N} » |
+| Alertes actives | rouge si > 0, sinon jaune | nombre d'alertes actives | — |
 
-### 2.2 Onglet « Livraisons »
+**Trois cartes de détail** (au milieu) :
 
-#### 2.2.1 Tableau livraisons
+- **Livraisons** : « Planifiées » (badge jaune), « En cours » (bleu), « Cette semaine » (vert).
+- **Équipements** : « Disponibles » (vert), « En utilisation » (bleu), « Maintenance » (violet).
+- **Véhicules** : « Disponibles » (vert), « En déplacement » (bleu), « KM total » (somme des kilométrages).
 
-Colonnes (triables via `useSortable`) :
-- **Reference** (`reference`, format `LIV-NNNNN` — ex. `LIV-83421`)
-- **Type** (`typeLivraison`)
-- **Zone** (`zoneStockage`)
-- **Statut** (selecteur inline editable : `planifiee`, `en_cours`, `livree`, `annulee`)
-- **Date prevue** (`datePrevue`)
-- **Actions** : bouton Supprimer (poubelle)
+**Section « Alertes actives »** (en bas, affichée **seulement s'il y a des alertes**) : chaque alerte se présente avec un liseré gauche coloré selon la priorité (**haute** = rose, **moyenne** = orange, sinon jaune), le message, un badge de priorité et une échéance facultative (« Échéance : {date} »).
 
-Filtres / actions :
-- **+ Nouvelle livraison** -> modale creation
-- Recherche texte (reference, type, zone, notes)
-- Filtre par statut (Tous / Planifiee / En cours / Livree / Annulee)
-- Pagination (20 par page)
+> **Lecture seule.** Le tableau de bord **n'offre aucun bouton** pour traiter une alerte ni pour en générer. C'est un affichage de synthèse. La génération et le traitement des alertes existent côté serveur (voir 4.6) mais ne sont pas exposés.
 
-#### 2.2.2 Modale creation
+### 2.3 Onglet Livraisons
 
-Champs : **Date prevue** (obligatoire), Heure prevue, Type (Fournisseur/Chantier/Transfert/Retour/Collecte), Zone de stockage, Notes.
+Source : `:296-451`.
 
-> **Champs API non exposes UI** : `projectId` et `fournisseurId` (acceptes par API mais pas dans la modale).
+**Barre d'outils** : bouton **« Nouvelle livraison »** (icône `Plus`), champ de recherche (« Rechercher... », filtre **local** sur référence, type, zone et notes) et menu de filtre par statut (Tous / Planifiée / En cours / Livrée / Annulée).
 
-#### 2.2.3 Items de livraison
+**Tableau (affichage bureau)**, colonnes triables (clic sur l'en-tête) :
 
-Une livraison possede des **items** detailles via `GET /logistics/deliveries/{id}` qui retourne `delivery + items[]`. Champs item (`logistics_delivery_items`) : `description`, `quantite_prevue`, `quantite_recue`, `unite` (m3/kg/etc.), `conforme` (boolean defaut TRUE), `notes`.
+| Colonne | Contenu |
+|---------|---------|
+| Référence | `reference` (format `LIV-#####`) ou, à défaut, `#id` |
+| Type | type de livraison |
+| Zone | zone de stockage |
+| Statut | **menu déroulant en ligne** pour changer le statut directement (planifiee / en_cours / livree / annulee) |
+| Date prévue | date planifiée |
+| Actions | bouton Supprimer (icône `Trash2`), confirmation « Supprimer la livraison {réf} ? » |
 
-**Endpoints** : `POST .../{id}/items` (ajouter), `DELETE .../{id}/items/{itemId}` (retirer). Pas d UI standard pour saisir les items — API exposee mais UI affiche seulement la liste maitre.
+Liste vide : « Aucune livraison ». **Pagination** de 25 par page si plus d'une page. Sur téléphone, chaque livraison devient une carte (référence, type · zone, badge de statut, date, bouton supprimer).
 
-> **Cascade DELETE** : suppression livraison cascade sur ses items (FK ON DELETE CASCADE).
+**Fenêtre « Nouvelle livraison »** (taille moyenne) :
 
-### 2.3 Onglet « Equipements »
+| Champ | Type | Obligatoire |
+|-------|------|-------------|
+| Date prévue | date | **Oui** (seul champ obligatoire) |
+| Heure prévue | heure | non |
+| Type de livraison | menu : Sélectionner… / Fournisseur / Chantier / Transfert / Retour / Collecte | non |
+| Zone de stockage | texte | non |
+| Notes | zone de texte (2 lignes) | non |
 
-#### 2.3.1 Tableau equipements
+Boutons **« Annuler »** / **« Créer »** (le bouton Créer est désactivé tant que la date est vide ; une garde interne empêche le double envoi). À la création, le serveur génère la référence `LIV-#####` et pose le statut `planifiee`.
 
-Colonnes :
-- **Code** (`code` monospace, format `EQP-NNNNN`)
-- **Nom** (`nom`)
-- **Categorie** (badge bleu — `Grue`, `Excavatrice`, `Chargeuse`, `Echafaudage`, `Compacteur`, `Betonniere`, `Generatrice`, `Autre`)
-- **Statut** (selecteur inline : `disponible`, `en_utilisation`, `maintenance`, `reserve`)
-- **Localisation** (`localisationActuelle` texte)
-- **Cout/jour** (`coutJournalier` formate $)
-- **Actions** : Supprimer
+> **Ce que la fenêtre ne montre pas.** Aucun champ pour rattacher un projet ou un fournisseur (les colonnes existent en base mais ne sont pas saisissables ici), et **aucun** moyen de saisir les articles détaillés de la livraison.
 
-Filtres :
-- Recherche texte (code, nom, categorie, localisation, notes)
-- Filtre par categorie (8 valeurs)
-- Filtre par statut (4 valeurs)
-- Pagination 20/page
+### 2.4 Onglet Équipements
 
-> **Cliquer sur une ligne** = selectionner l equipement et afficher la section **Maintenance** en bas du tableau (cf. 2.3.4).
+Source : `:455-806`.
 
-#### 2.3.2 Modale creation equipement
+**Barre d'outils** : bouton **« Nouvel équipement »**, recherche locale (code, nom, catégorie, localisation, notes), filtre par **catégorie** (Toutes / Grue / Excavatrice / Chargeuse / Échafaudage / Compacteur / Bétonnière / Génératrice / Autre) et filtre par **statut** (Tous / Disponible / En utilisation / Maintenance / Réservé).
 
-Champs : **Nom** (obligatoire), Categorie (8 valeurs), Type possession (Propriete/Location), Cout journalier $, Cout mensuel $, Localisation actuelle, Notes.
+**Tableau**, colonnes triables :
 
-> **Code auto** : `EQP-NNNNN` (backend `_gen_numero("EQP")`). **Statut defaut** : `disponible`. **Champs DB non saisis UI** : `description`, `fournisseur_location_id`, `date_acquisition`, `date_fin_location`, `valeur_achat`, `prochaine_maintenance`, `prochaine_inspection`, `heures_utilisation`. Edition uniquement via API directe ou patches DB.
+| Colonne | Contenu |
+|---------|---------|
+| Code | `code` en police à chasse fixe (format `EQP-#####`) |
+| Nom | nom de l'équipement |
+| Catégorie | badge bleu |
+| Statut | **menu déroulant en ligne** (disponible / en_utilisation / maintenance / reserve) |
+| Localisation | localisation actuelle (texte) |
+| Coût/jour | coût journalier mis en forme en dollars |
+| Actions | bouton **Historique de maintenance** (icône `Wrench`) + bouton Supprimer (confirmation « Supprimer l'équipement {nom} ? ») |
 
-#### 2.3.3 Reservations equipement
+**Cliquer sur une ligne** sélectionne l'équipement (ligne surlignée) et **charge sa maintenance** en dessous du tableau. Liste vide : « Aucun équipement ». **Pagination** 25 par page.
 
-Endpoints : `GET /logistics/equipment/{id}/reservations` et `POST .../reservations`. Champs : `project_id` (optionnel), `date_debut` (obligatoire), `date_fin` (obligatoire DDL, optionnel API), `responsable`, `statut` (defaut `reservee`), `notes`.
+**Fenêtre « Nouvel équipement »** :
 
-> **Pas d UI standard** pour saisir les reservations : API exposee, mais l UI active uniquement la maintenance sous le tableau equipements. Reservations creables via API directe ou ajout UI futur.
-> **Pas de detection chevauchement** : deux reservations sur memes dates / meme equipement acceptees sans erreur. Verification visuelle requise.
+| Champ | Type | Obligatoire |
+|-------|------|-------------|
+| Nom | texte | **Oui** |
+| Catégorie | menu (8 valeurs) | non |
+| Type de possession | menu : Propriété / Location (défaut : Propriété) | non |
+| Coût journalier ($) | nombre | non |
+| Coût mensuel ($) | nombre | non |
+| Localisation actuelle | texte | non |
+| Notes | zone de texte | non |
 
-#### 2.3.4 Section Maintenance equipement
+Le serveur génère le code `EQP-#####` et pose le statut `disponible`.
 
-Apparait en bas de l onglet Equipements quand un equipement est selectionne (clic ligne).
+**Section « Historique de maintenance — {nom} »** (visible seulement quand un équipement est sélectionné, `:674-720`) :
 
-Source : `LogistiquePage.tsx:642-687`.
+- En-tête avec le nom de l'équipement + bouton **« Ajouter intervention »**.
+- Tableau : Date / Type (badge violet) / Technicien / Coût / **Conforme** (coche verte `CheckCircle` si conforme, sinon triangle rose `AlertTriangle`) / Actions (supprimer, confirmation « Supprimer cette intervention ? »).
+- Liste vide : « Aucune intervention enregistrée ».
 
-Tableau :
-- **Date** (`dateIntervention`)
-- **Type** (badge purple : `maintenance` / `inspection` / `reparation` / `certification`)
-- **Technicien**
-- **Cout** ($)
-- **Conforme** (icone CheckCircle vert ou AlertTriangle rouge)
-- **Actions** : Supprimer
+**Fenêtre « Nouvelle intervention de maintenance »** :
 
-Bouton **+ Ajouter intervention** -> modale.
+| Champ | Type | Obligatoire |
+|-------|------|-------------|
+| Type d'intervention | menu : Maintenance préventive / Inspection / Réparation / Certification (défaut : Maintenance préventive) | non |
+| Date intervention | date | **Oui** |
+| Technicien | texte | non |
+| Coût ($) | nombre | non |
+| Prochaine date | date | non |
+| Conforme | case à cocher (cochée par défaut) | non |
+| Description | zone de texte | non |
 
-Modale champs :
-- **Type d intervention** (dropdown : Maintenance preventive / Inspection / Reparation / Certification)
-- **Date intervention** (obligatoire)
-- **Technicien**
-- **Cout** ($)
-- **Prochaine date** (date — propage automatiquement sur `equipment.prochaine_maintenance`)
-- **Conforme** (checkbox, defaut coche)
-- **Description** (textarea)
+> **Effet important de « Prochaine date ».** Si vous renseignez « Prochaine date », le serveur met aussi à jour le champ `prochaine_maintenance` de l'équipement — c'est cette valeur qui alimentera plus tard les alertes automatiques (voir 4.11). Modifier ou supprimer une intervention **repropage** ou **recalcule** cette échéance.
 
-> **Effet de bord important** : si `prochaine_date` est saisie a la creation d une intervention, le backend met aussi a jour `logistics_equipment.prochaine_maintenance` avec cette valeur (declenche la prochaine alerte automatique).
+> **Réservations d'équipement.** Aucun écran ici, même si le serveur les gère (avec refus des chevauchements). Le clic sur une ligne n'ouvre **que** la maintenance.
 
-### 2.4 Onglet « Vehicules »
+### 2.5 Onglet Véhicules
 
-#### 2.4.1 Tableau vehicules
+Source : `:810-981`.
 
-Colonnes :
-- **Vehicule** (concatenation `marque + modele`)
-- **Immatriculation** (UNIQUE)
-- **Type** (`typeVehicule` : Camionnette / Camion leger / Camion lourd / Fourgonnette / Remorque / Voiture / Autre)
-- **Statut** (selecteur inline : `disponible`, `en_deplacement`, `maintenance`, `hors_service`)
-- **KM** (`kilometrage`)
-- **Actions** : Supprimer
+**Barre d'outils** : bouton **« Nouveau véhicule »**, recherche locale (immatriculation, marque, modèle, type), filtre par statut (Tous / Disponible / En déplacement / Maintenance / Hors service).
 
-Filtres :
-- Recherche texte (immatriculation, marque, modele, type)
-- Filtre par statut
+**Tableau**, colonnes triables :
 
-> Pas de pagination cote frontend pour vehicules (tout charge en memoire — Liste complete via `GET /logistics/vehicles`). Adequat pour des flottes de taille moyenne.
+| Colonne | Contenu |
+|---------|---------|
+| Véhicule | marque + modèle |
+| Immatriculation | immatriculation (unique) |
+| Type | type de véhicule |
+| Statut | **menu déroulant en ligne** (disponible / en_deplacement / maintenance / hors_service) |
+| KM | kilométrage (mis en forme avec séparateurs de milliers) |
+| Actions | bouton Supprimer (confirmation « Supprimer le véhicule {immat.} ? ») |
 
-#### 2.4.2 Modale creation vehicule
+Liste vide : « Aucun véhicule ». **Aucune pagination** : la liste complète est chargée (le filtre véhicule ne porte que sur le statut). Sur téléphone : cartes empilées.
 
-Champs : **Immatriculation** (obligatoire UNIQUE), Marque/Modele/Annee, Type vehicule (7 valeurs), Capacite charge + Unite (kg/lb/tonnes), Kilometrage, Consommation (L/100km), Cout/km ($), Notes.
+**Fenêtre « Nouveau véhicule »** :
 
-> **Statut par defaut** : `disponible`. **Champs DB non exposes UI** : `conducteur_attritre_id`, `date_prochain_entretien`, `date_prochaine_inspection`, `assurance_expiration`. Pour activer alertes auto assurance (cf. 2.7), renseigner `assurance_expiration` directement en base — `VehicleUpdate` Pydantic ne gere pas ce champ (limitation).
+| Champ | Type | Obligatoire |
+|-------|------|-------------|
+| Immatriculation | texte | **Oui** (unique) |
+| Marque / Modèle / Année | texte / texte / nombre | non |
+| Type de véhicule | menu : Sélectionner… / Camionnette / Camion léger / Camion lourd / Fourgonnette / Remorque / Voiture / Autre | non |
+| Capacité charge / Unité / Kilométrage | nombre / menu (kg, lb, tonnes ; défaut kg) / nombre | non |
+| Consommation (L/100km) / Coût par km ($) | nombre / nombre | non |
+| Notes | zone de texte | non |
 
-#### 2.4.3 Trips (Deplacements vehicule)
+Le serveur pose le statut `disponible`. **Modification après coup** : seuls le **statut** (menu en ligne) et le **kilométrage** (via l'API) sont modifiables ; l'année est bornée de 1900 à 2100.
 
-Endpoints : `GET .../trips` (historique), `POST .../trips` (creer). Champs trip : `project_id` (optionnel), `date_depart` (NOW auto), `date_retour` (NULL au depart), `km_depart`, `km_retour`, `destination`, `motif`, `carburant_litres`, `cout_carburant`, `conducteur_id`, `notes`.
+> **Trajets de véhicule.** Aucun écran. Le serveur enregistre les déplacements, mais ni l'onglet Véhicules ni l'onglet GPS ne les affiche.
 
-> **Pas d UI standard** pour saisir les trips : API exposee. Pas de section UI dediee aux trips. Lecture API ou extensions futures.
-> **Cloture deplacement (`km_retour`, `cout_carburant`)** : pas d endpoint PUT — les trips sont append-only.
+### 2.6 Onglet « Trajets » = Coordination de chantier
 
-### 2.5 Onglet « Coordination »
+Source : `:985-1152`.
 
-#### 2.5.1 Tableau coordination
+> **Rappel du libellé trompeur.** L'onglet s'appelle « Trajets » mais gère des **activités de coordination de chantier** (table `logistics_site_coordination`). Il n'a rien à voir avec les déplacements de véhicule.
 
-Colonnes :
-- **Date** (`dateCoordination`)
-- **Type** (badge bleu — `Livraison beton`, `Livraison materiaux`, `Arrivee grue`, `Coulee beton`, `Installation equipement`, `Inspection`, `Reunion de chantier`, `Fermeture de rue`, `Autre`)
-- **Horaire** (heure debut - heure fin)
-- **Zone** (`zoneConcernee`)
-- **Responsable**
-- **Statut** (selecteur inline : `planifie`, `en_cours`, `termine`, `annule`)
-- **Actions** : Supprimer
+**Barre d'outils** : bouton **« Nouvelle activité »**, recherche locale (type, zone, responsable, notes), filtre par statut (Tous / Planifié / En cours / Terminé / Annulé).
 
-Filtres :
-- Recherche texte (type, zone, responsable, notes)
-- Filtre par statut
-- Pagination 20/page
+**Tableau**, colonnes triables :
 
-#### 2.5.2 Modale creation
+| Colonne | Contenu |
+|---------|---------|
+| Date | date de l'activité |
+| Type | badge bleu (type d'activité) |
+| Horaire | heure de début – heure de fin |
+| Zone | zone concernée |
+| Responsable | nom du responsable |
+| Statut | **menu déroulant en ligne** (planifie / en_cours / termine / annule) |
+| Actions | bouton Supprimer (confirmation « Supprimer cette activité ? ») |
 
-Champs : **Date** (obligatoire), **Type d activite** (obligatoire, 9 valeurs), Heure debut/fin, Zone concernee, Responsable, Notes.
+Liste vide : « Aucune activité de coordination ». **Pagination** 25 par page.
 
-> **Reference auto** : `COORD-NNNNN`. **Statut defaut** : `planifie`. **Champs DB non exposes UI** : `acces_requis`, `contraintes`, `sequence_ordre`.
+**Fenêtre « Nouvelle activité de coordination »** :
 
-### 2.6 Onglet « GPS / Carte »
+| Champ | Type | Obligatoire |
+|-------|------|-------------|
+| Date | date | **Oui** |
+| Type d'activité | menu : Sélectionner… / Livraison béton / Livraison matériaux / Arrivée grue / Coulée béton / Installation équipement / Inspection / Réunion de chantier / Fermeture de rue / Autre | **Oui** |
+| Heure début / Heure fin | heure / heure | non |
+| Zone concernée / Responsable | texte / texte | non |
+| Notes | zone de texte | non |
 
-Source : `LogistiquePage.tsx:1116-1372`. Recupere les donnees du module GPS via `gpsApi.*` (pas `logisticsApi`).
+Le bouton Créer est désactivé tant que la **date** ou le **type** est vide. Le serveur génère la référence `COORD-#####` et pose le statut `planifie`.
 
-4 sous-onglets : **Vehicules GPS** (`GET /api/gps/vehicles`, lecture), **Lieux** (`GET /api/gps/locations`, lecture + creation locale), **Geofences** (lecture), **Routes** (lecture).
+### 2.7 Onglet GPS / Trajets
 
-Affichage : tableaux simples (lat/lng/vitesse/derniere position pour vehicules ; nom/type/lat-lng pour lieux ; type zone + rayon + alertes pour geofences).
+Source : `:1156-1416`. Au chargement, l'onglet appelle **quatre** jeux de données en parallèle (`gps.py`) : véhicules, lieux, geofences et routes. Il présente **quatre sous-onglets** (boutons en pilule) :
 
-> **Sous-onglet Lieux** offre un bouton « Ajouter lieu » avec modale. Autres sous-onglets en lecture seule.
-> **Pas de carte interactive integree** : coordonnees affichees au format texte/monospace. Pour une carte, voir module Carte separe.
+**Sous-onglet « Véhicules GPS ({N}) »** (icône `Truck`) — **lecture seule**. Tableau : Véhicule / Immatriculation / Statut (badge) / Latitude (6 décimales, chasse fixe) / Longitude / Vitesse (km/h) / Dernière position (date). Vide : « Aucun véhicule avec données GPS ». La position vient de la dernière ligne de `gps_vehicle_tracking` jointe à `logistics_vehicles`.
 
-### 2.7 Alertes automatiques
+**Sous-onglet « Lieux ({N}) »** (icône `MapPin`) — **la seule zone modifiable de l'onglet GPS**. Bouton **« Ajouter lieu »**. Tableau : Nom / Type (badge bleu) / Latitude / Longitude / Ville. Vide : « Aucun lieu enregistré ».
 
-Endpoint : `POST /logistics/alerts/generate`. Pas de bouton UI standard — appelable via API ou cron. Genere 3 types d alertes en idempotent (pas de doublon si alerte active existe deja) :
+- **Fenêtre « Ajouter un lieu GPS »** : Nom * / Latitude * (nombre) / Longitude * (nombre) / Type (texte, défaut `chantier`) / Ville. Le bouton Ajouter est désactivé tant que le nom, la latitude ou la longitude manquent.
 
-| Type alerte            | Source                            | Echeance    | Priorite                         |
-|------------------------|-----------------------------------|-------------|----------------------------------|
-| `maintenance_prevue`   | `equipment.prochaine_maintenance` | <= 7 jours  | `haute` si <= 2j sinon `normale` |
-| `inspection_requise`   | `equipment.prochaine_inspection`  | <= 7 jours  | `haute` si <= 2j sinon `normale` |
-| `assurance_expiration` | `vehicle.assurance_expiration`    | <= 30 jours | `haute` si <= 7j sinon `normale` |
+**Sous-onglet « Geofences ({N}) »** (icône `Navigation`) — **lecture seule, aucun bouton de création**. Tableau : Nom / Type de zone (badge violet) / Centre (latitude) / Centre (longitude) / Rayon (m) / Alertes (indicateurs « Entrée » / « Sortie »). Vide : « Aucune geofence ». (La création de zone existe côté serveur mais **n'a pas d'écran**.)
 
-Traitement : `PUT /logistics/alerts/{id}` body `{statut: 'traitee', traite_par: 'Nom'}`. `date_traitement = CURRENT_TIMESTAMP` automatiquement.
+**Sous-onglet « Routes ({N}) »** (icône `Navigation`) — **lecture seule**. Tableau : Origine / Statut (badge) / Distance (km) / Destination. Vide : « Aucune route ».
+
+> **Pas de carte, pas d'historique.** Les positions sont des tableaux de coordonnées, jamais une carte. L'historique de déplacement d'un véhicule existe côté serveur (`GET /gps/vehicles/{id}/history`) mais n'est pas affiché.
+
+### 2.8 Onglet Assistant IA
+
+Source : `LogistiqueAssistantTab.tsx` (151 lignes). Chat **en lecture seule** : il lit vos données mais n'écrit rien et ne propose aucune action.
+
+- **En-tête** : icône `Sparkles`, titre « **Assistant IA — Logistique** », sous-titre « Interroge tes livraisons, équipements, véhicules et alertes (lecture seule). ».
+- **État vide** : message d'invitation « Pose une question sur ta logistique (livraisons, équipements, véhicules, coordination de chantier, alertes). L'assistant lit tes données réelles. », suivi de **3 exemples cliquables** :
+  - « Quelles livraisons sont planifiées cette semaine ? »
+  - « Combien d'équipements et de véhicules avons-nous ? »
+  - « Y a-t-il des alertes logistiques ouvertes ? »
+- **Messages** : les vôtres à droite, ceux de l'assistant à gauche. Sous chaque réponse, un pied de bulle affiche le profil « Logistique », le nombre de jetons, le **coût** et la **durée** de la réponse.
+- **En cours** : indicateur « Analyse en cours… ».
+- **Erreur** : bande rouge (le message vient du serveur si disponible, sinon « Une erreur est survenue. Réessaie. »).
+- **Zone de saisie** : champ multiligne (« Pose ta question sur la logistique… »). **Entrée** envoie le message, **Maj + Entrée** insère un saut de ligne. Bouton « Envoyer ». Un verrou interne empêche le double envoi.
+
+> **Ce que l'assistant peut et ne peut pas faire.** Il **lit** vos données réelles (via une requête de lecture seule) sur les livraisons, articles, équipements, réservations, maintenance, véhicules, trajets, coordination et alertes, plus les projets et entreprises. Il **ne peut pas** consulter la paie, les employés, les salaires, les NAS, les crédits IA ni les jetons — ces tables lui sont interdites. Il **n'écrit jamais** en base.
+
+### 2.9 Éléments transverses
+
+- **Recherche** : toujours **locale** (elle filtre la page déjà chargée, pas toute la base). Présente dans les onglets Livraisons, Équipements, Véhicules et Coordination.
+- **Tri** : clic sur les en-têtes de colonne dans les quatre tableaux principaux.
+- **Changement de statut** : par **menu déroulant en ligne** dans le tableau (aucune fenêtre), pour les livraisons, équipements, véhicules et activités.
+- **Adaptatif** : tableaux sur ordinateur, cartes empilées sur téléphone.
+- **Aucune exportation, impression, CSV, PDF, téléversement ni action groupée** nulle part.
 
 ---
 
-## 3. Workflows pas-a-pas
+## 3. Workflows pas à pas
 
-### 3.1 Planifier une livraison (entrante)
+### 3.1 Planifier une livraison
 
-1. Logistique -> onglet **Livraisons** -> bouton **+ Nouvelle livraison** -> saisir date prevue (obligatoire), heure, type (`Fournisseur` pour materiaux entrants), zone de stockage, notes.
-2. **Creer** -> `POST /logistics/deliveries`. Backend genere `reference = LIV-NNNNN`, statut `planifiee`.
+1. Onglet **Livraisons** → **« Nouvelle livraison »**.
+2. Saisir la **date prévue** (obligatoire) ; au besoin l'heure, le type (par exemple « Fournisseur » pour des matériaux entrants), la zone de stockage et des notes.
+3. **Créer**. Le serveur attribue une référence `LIV-#####` et le statut `planifiee` ; la livraison apparaît dans le tableau.
 
-### 3.2 Ajouter des items detailles a une livraison
+> Il n'y a pas de champ pour les articles de la livraison ni pour le projet/fournisseur : ces informations doivent être consignées ailleurs (notes, module Magasin, module Projets).
 
-> API exposee, UI standard limitee — utiliser un client API.
+### 3.2 Suivre et faire avancer une livraison
 
-1. `POST /logistics/deliveries/{id}/items` body : `{description, quantite_prevue, unite}`.
-2. Repeter pour chaque item.
-3. **Suppression item** : `DELETE /logistics/deliveries/{id}/items/{item_id}`.
+1. Onglet **Livraisons** → repérer la ligne (recherche ou filtre par statut au besoin).
+2. Dans la colonne **Statut**, ouvrir le menu déroulant et choisir le nouvel état : `planifiee` → `en_cours` (camion en route) → `livree` (reçue), ou `annulee`.
+3. Le changement est enregistré immédiatement. **Aucune date effective** n'est saisie automatiquement au passage à « livrée ».
 
-### 3.3 Suivre l etat d une livraison
+### 3.3 Supprimer une livraison
 
-1. Onglet Livraisons -> tableau, colonne **Statut**.
-2. Selecteur inline : changer `planifiee` -> `en_cours` (camion en route) -> `livree` (recue) ou `annulee`.
-3. Le `PUT /logistics/deliveries/{id}` envoie uniquement le statut + notes (champs whitelist limites).
-4. Pas de date_effective auto-saisie a `livree` (limite — saisir manuellement en BD si besoin).
+1. Onglet **Livraisons** → bouton Supprimer (icône poubelle) sur la ligne.
+2. Confirmer « Supprimer la livraison {réf} ? ». La livraison **et ses articles** (s'il y en a) sont supprimés (cascade en base).
 
-### 3.4 Supprimer une livraison
+### 3.4 Enregistrer un équipement
 
-1. Tableau -> bouton poubelle.
-2. Confirmation -> `DELETE /logistics/deliveries/{id}`.
-3. **Cascade** : tous les `delivery_items` lies sont supprimes automatiquement (FK ON DELETE CASCADE).
+1. Onglet **Équipements** → **« Nouvel équipement »**.
+2. Saisir le **nom** (obligatoire) ; au besoin la catégorie, le type de possession (Propriété ou Location), les coûts journalier et mensuel, la localisation et des notes.
+3. **Créer**. Le serveur attribue un code `EQP-#####` et le statut `disponible`.
 
-### 3.5 Creer un equipement
+### 3.5 Consigner une intervention de maintenance
 
-1. Onglet **Equipements** -> bouton **+ Nouvel equipement** -> remplir nom (obligatoire), categorie, type possession, cout journalier/mensuel, localisation, notes (cf. section 2.3.2).
-2. **Creer** -> `POST /logistics/equipment`. Backend genere `code = EQP-NNNNN`, statut par defaut `disponible`.
+1. Onglet **Équipements** → **cliquer sur la ligne** de l'équipement (elle se surligne, la section maintenance s'ouvre en dessous).
+2. **« Ajouter intervention »**.
+3. Choisir le type (Maintenance préventive / Inspection / Réparation / Certification), saisir la **date** (obligatoire), le technicien, le coût, cocher ou décocher **Conforme**, et — important — remplir **Prochaine date** si vous voulez déclencher une future alerte.
+4. **Créer**. L'intervention s'ajoute à l'historique ; si « Prochaine date » est renseignée, l'échéance `prochaine_maintenance` de l'équipement est mise à jour.
 
-### 3.6 Reserver un equipement pour un projet
+> Pour supprimer une intervention : bouton poubelle dans le tableau de maintenance (« Supprimer cette intervention ? »). Le serveur **recalcule** alors l'échéance de l'équipement à partir de l'intervention la plus récente restante.
 
-> API exposee, UI standard limitee.
+### 3.6 Surveiller les échéances de maintenance et les alertes
 
-1. `POST /logistics/equipment/{id}/reservations` body : `{project_id?, date_debut, date_fin?, responsable?, notes?}`.
-2. Statut par defaut `reservee`. Lister via `GET .../reservations`.
-3. **Verifier conflits manuellement** : aucune detection automatique de chevauchement.
+- Le **tableau de bord** affiche le nombre d'**alertes actives** et, plus bas, la liste des alertes avec leur priorité et leur échéance.
+- Pour interroger précisément les échéances, utilisez l'**assistant IA** (« Quels équipements ont une maintenance ou une inspection prévue bientôt ? »).
+- **Il n'y a pas de bouton** pour générer ni traiter les alertes depuis l'écran. La génération automatique (maintenance/inspection à 7 jours, assurance à 30 jours) et le marquage « traitée » existent côté serveur (voir 4.6 et 4.11) mais ne sont pas exposés à l'utilisateur.
 
-### 3.7 Enregistrer une intervention de maintenance equipement
+### 3.7 Ajouter un véhicule à la flotte
 
-1. Onglet Equipements -> **cliquer sur la ligne** d un equipement (surlignage bleu).
-2. Section Maintenance apparait en bas -> bouton **+ Ajouter intervention**.
-3. Modale (cf. 2.3.4) : type (maintenance/inspection/reparation/certification), date (obligatoire), technicien, cout, prochaine date, conforme, description.
-4. **Creer** -> `POST /logistics/equipment/{id}/maintenance`. Backend INSERT + **si `prochaine_date`** renseignee : UPDATE `logistics_equipment.prochaine_maintenance` (declenche prochaines alertes auto).
+1. Onglet **Véhicules** → **« Nouveau véhicule »**.
+2. Saisir l'**immatriculation** (obligatoire, unique) ; au besoin marque, modèle, année (1900-2100), type, capacité + unité, kilométrage initial, consommation, coût par km et notes.
+3. **Créer**. Statut initial `disponible`.
 
-### 3.8 Modifier ou supprimer une maintenance
+### 3.8 Mettre à jour le statut ou le kilométrage d'un véhicule
 
-- **Modifier** : `PUT /logistics/maintenance/{maintenance_id}` (endpoint racine, pas par equipement).
-- **Supprimer** : icone poubelle dans le tableau Maintenance -> `DELETE /logistics/maintenance/{maintenance_id}`.
+1. Onglet **Véhicules** → colonne **Statut** : menu déroulant en ligne (disponible / en_deplacement / maintenance / hors_service).
+2. Le kilométrage se met à jour via l'API (`PUT /logistics/vehicles/{id}`). Seuls le statut, le kilométrage et les notes sont modifiables après création ; les autres champs (marque, type, capacité…) ne sont pas éditables — il faut supprimer et recréer.
 
-> Attention : la suppression d une maintenance ne reinitialise PAS `equipment.prochaine_maintenance` (qui reste sur la valeur derniere `prochaine_date` posee).
+### 3.9 Planifier une activité de coordination de chantier
 
-### 3.9 Lister les alertes maintenance/inspection a venir
+1. Onglet **« Trajets »** (qui contient la coordination) → **« Nouvelle activité »**.
+2. Saisir la **date** et le **type d'activité** (tous deux obligatoires) ; au besoin les heures de début et de fin, la zone concernée, le responsable et des notes.
+3. **Créer**. Référence `COORD-#####`, statut `planifie`.
+4. Faire avancer l'activité par le menu de statut en ligne (planifie → en_cours → termine, ou annule).
 
-1. `GET /logistics/maintenance/alertes` -> retourne les equipements dont `prochaine_maintenance` ou `prochaine_inspection` est <= 7 jours.
-2. Reponse : tableau d objets `{id, code, nom, type, date_echeance, urgence}`.
-3. `urgence = 'haute'` si <= 2 jours, sinon `'normale'`.
+### 3.10 Consulter la flotte sur le suivi GPS
 
-### 3.10 Ajouter un vehicule a la flotte
+1. Onglet **GPS / Trajets** → sous-onglet **« Véhicules GPS »**.
+2. Le tableau montre la dernière position connue de chaque véhicule (latitude, longitude, vitesse, horodatage). C'est **en lecture seule** : les positions viennent du suivi GPS, pas de saisie manuelle.
+3. Les sous-onglets **Geofences** et **Routes** sont eux aussi en lecture seule.
 
-1. Onglet **Vehicules** -> bouton **+ Nouveau vehicule** -> remplir immatriculation (obligatoire UNIQUE), marque/modele/annee, type, capacite + unite, kilometrage initial, consommation, cout/km, notes (cf. 2.4.2).
-2. **Creer** -> `POST /logistics/vehicles`. Statut par defaut `disponible`.
+### 3.11 Ajouter un lieu GPS
 
-### 3.11 Mettre a jour le kilometrage / statut vehicule
+1. Onglet **GPS / Trajets** → sous-onglet **« Lieux »** → **« Ajouter lieu »**.
+2. Saisir le **nom**, la **latitude** et la **longitude** (obligatoires) ; au besoin le type (défaut `chantier`) et la ville.
+3. **Ajouter**. Le lieu apparaît dans le tableau. C'est la **seule** création possible dans l'onglet GPS.
 
-1. Tableau Vehicules -> selecteur statut inline (`disponible` / `en_deplacement` / `maintenance` / `hors_service`).
-2. Pour le kilometrage : `PUT /logistics/vehicles/{id}` body `{kilometrage: 45000}` (whitelist : seuls `statut`, `kilometrage`, `notes` sont modifiables via PUT — les autres champs vehicule ne sont pas editables apres creation).
+### 3.12 Interroger l'assistant IA
 
-### 3.12 Demarrer un trip vehicule
+1. Onglet **Assistant IA**.
+2. Cliquer un exemple ou écrire votre question (par exemple : « Combien d'équipements sont en maintenance et lesquels ? »).
+3. **Entrée** pour envoyer (**Maj + Entrée** pour aller à la ligne). L'assistant lit vos données réelles et répond ; le coût s'affiche sous la réponse.
+4. Enchaîner les questions : l'assistant tient compte des 12 derniers échanges.
 
-> API exposee, UI standard limitee.
+> Si vous voyez « Crédits IA épuisés » (erreur 402), rechargez le solde de crédits IA de l'entreprise (module Configuration / Abonnement). La consultation logistique, elle, reste gratuite.
 
-1. `POST /logistics/vehicles/{id}/trips` body : `{project_id?, destination, motif?, km_depart?}`.
-2. Backend insere `date_depart = NOW()`, `date_retour = NULL`.
-3. **Pas d endpoint PUT** pour cloturer le trip (`km_retour`, `date_retour`, `cout_carburant`) — limitation actuelle.
+### 3.13 Comprendre un refus (403) ou le mode consultation
 
-### 3.13 Planifier une activite de coordination chantier
-
-1. Onglet **Coordination** -> bouton **+ Nouvelle activite** -> saisir date (obligatoire), type d activite (obligatoire, 9 valeurs), heure debut/fin, zone, responsable, notes (cf. 2.5.2).
-2. **Creer** -> `POST /logistics/coordination`. Backend genere `reference = COORD-NNNNN`, statut `planifie`.
-
-### 3.14 Generer manuellement les alertes preventives
-
-1. Appeler `POST /logistics/alerts/generate` (pas de bouton UI dans `LogistiquePage.tsx` standard — a integrer ou appeler via cron).
-2. Backend parcourt :
-   - Equipements avec `prochaine_maintenance <= +7 jours` -> alerte `maintenance_prevue`
-   - Equipements avec `prochaine_inspection <= +7 jours` -> alerte `inspection_requise`
-   - Vehicules avec `assurance_expiration <= +30 jours` -> alerte `assurance_expiration`
-3. **Idempotent** : ne cree pas de doublons (verifie qu une alerte active du meme `(reference_type, reference_id, type_alerte)` n existe pas deja).
-4. Reponse : `{generated: 5, message: '5 alerte(s) generee(s)'}`.
-
-### 3.15 Traiter une alerte
-
-1. Tableau de bord -> section Alertes actives (lecture).
-2. Pour traiter (pas de bouton UI standard — utiliser API) : `PUT /logistics/alerts/{id}` body `{statut: "traitee", traite_par: "Nom"}`.
-3. Backend met `date_traitement = CURRENT_TIMESTAMP` automatiquement.
-
-### 3.16 Analyser la logistique avec IA (Opus, JSON score)
-
-1. `POST /logistics/ia/analyser` (sans body).
-2. Backend verifie `check_ai_guard(user)` (HTTP 403 sinon) + `_check_credits(user)` (HTTP 402 sinon).
-3. Recupere stats + 20 dernieres livraisons + tous equipements + tous vehicules. Appelle **Claude Opus 4** (max 4096 tokens).
-4. Reponse JSON avec sections : `score_logistique` (0-100), `resume`, `points_forts` (liste), `points_amelioration` (liste), `analyse_livraisons`, `analyse_equipements`, `analyse_vehicules`, `recommandations_prioritaires` (liste).
-5. Tracking : `track_ai_usage(user, 'logistique_analyser', ...)` + deduction credits.
-
-### 3.17 Chat IA logistique
-
-1. `POST /logistics/ia/chat` body : `{question: "...", context?: "..."}`.
-2. Modele : Claude Sonnet 4 (rapide et abordable).
-3. Reponse texte libre + usage tokens + cout.
-
-### 3.18 Generer un rapport logistique IA (Markdown 8 sections)
-
-1. `POST /logistics/ia/rapport` (sans body).
-2. Backend recupere les 50 dernieres livraisons + tous equipements + tous vehicules. Sonnet 4 (max 8192 tokens).
-3. Rapport Markdown 8 sections : Resume executif / Analyse des livraisons / Analyse des equipements / Analyse de la flotte / Plan d action / Gains potentiels / KPIs recommandes / Conclusion.
-4. Reponse : `{rapport: "<markdown>", usage: {...}}`. Telechargeable / exportable cote frontend.
-
-### 3.19 Optimiser une operation logistique IA
-
-1. `POST /logistics/ia/optimiser` body : `{besoin: "...", nombre_vehicules?, nombre_equipements?, nombre_livraisons_semaine?}`.
-2. Sonnet 4 retourne JSON structure : `titre_solution`, `description`, `etapes` (liste), `ressources_necessaires` (liste), `benefices_attendus` (liste), `risques` (liste), `indicateurs_succes` (liste), `alternatives` (liste).
-
-### 3.20 Consulter les vehicules sur la carte GPS
-
-1. Onglet **GPS / Carte** -> sous-onglet **Vehicules GPS**.
-2. Appel `GET /api/gps/vehicles` -> recupere positions actuelles + vitesse + derniere position.
-3. Tableau lecture seule. Pour modifier les positions, utiliser le module GPS / Carte (separe).
-
-### 3.21 Ajouter un lieu GPS
-
-1. Onglet GPS -> sous-onglet **Lieux** -> bouton **Ajouter lieu** -> nom (obligatoire), latitude/longitude (obligatoires), type, ville.
-2. `POST /api/gps/locations` (endpoint module GPS, pas Logistique).
+- Si une création ou une suppression renvoie **403** alors que vous êtes connecté : votre rôle n'est probablement pas dans la liste d'écriture (administrateur, gestionnaire, contremaître, magasinier). Demandez à un administrateur.
+- Si **toutes** les écritures échouent pour **tout le monde** : le tenant est en **mode consultation** (abonnement Stripe inactif). Régularisez l'abonnement pour rétablir l'écriture.
 
 ---
 
-## 4. Reference
+## 4. Référence
 
-### 4.1 Statuts par entite
+### 4.1 Statuts par entité
 
-| Entite              | Statuts (verbatim cote frontend / backend)                    |
-|---------------------|---------------------------------------------------------------|
-| Livraison           | `planifiee`, `en_cours`, `livree`, `annulee`                  |
-| Equipement          | `disponible`, `en_utilisation`, `maintenance`, `reserve`      |
-| Vehicule            | `disponible`, `en_deplacement`, `maintenance`, `hors_service` |
-| Coordination        | `planifie`, `en_cours`, `termine`, `annule`                   |
-| Reservation equipement | `reservee` (defaut, autres possibles non standardises)     |
-| Maintenance equipement | conforme = boolean                                          |
-| Alerte              | `active`, `traitee` (par PUT)                                 |
-| Priorite alerte     | `haute`, `moyenne` (rare), `normale`                          |
+| Entité | Statuts |
+|--------|---------|
+| Livraison | `planifiee`, `en_cours`, `livree`, `annulee` |
+| Équipement | `disponible`, `en_utilisation`, `maintenance`, `reserve` |
+| Véhicule | `disponible`, `en_deplacement`, `maintenance`, `hors_service` |
+| Coordination | `planifie`, `en_cours`, `termine`, `annule` |
+| Réservation d'équipement (serveur seulement) | `reservee` (défaut) ; les réservations `annulee` sont ignorées au test de chevauchement |
+| Maintenance | `conforme` = vrai/faux (pas de statut) |
+| Alerte | `active` (défaut), `traitee` |
+| Priorité d'alerte | `haute`, `normale` (le libellé `moyenne` est reconnu à l'affichage mais rarement produit) |
 
-### 4.2 Types et categories
+**Couleurs de statut** (`:119-127`, `statutColor`) : vert (livrée / disponible / terminé / complet), bleu (en cours / en déplacement / en utilisation / actif), jaune (planifié / réservé), rouge (annulé / hors service), violet (maintenance), gris (autre).
 
-| Champ                  | Valeurs                                                                 |
-|------------------------|-------------------------------------------------------------------------|
-| **Type livraison**     | `Fournisseur`, `Chantier`, `Transfert`, `Retour`, `Collecte`            |
-| **Categorie equipement** | `Grue`, `Excavatrice`, `Chargeuse`, `Echafaudage`, `Compacteur`, `Betonniere`, `Generatrice`, `Autre` |
-| **Type possession equipement** | `propriete`, `location`                                       |
-| **Type vehicule**      | `Camionnette`, `Camion leger`, `Camion lourd`, `Fourgonnette`, `Remorque`, `Voiture`, `Autre` |
-| **Unite capacite**     | `kg`, `lb`, `tonnes`                                                    |
-| **Type activite coordination** | `Livraison beton`, `Livraison materiaux`, `Arrivee grue`, `Coulee beton`, `Installation equipement`, `Inspection`, `Reunion de chantier`, `Fermeture de rue`, `Autre` |
-| **Type intervention maintenance** | `maintenance` (preventive), `inspection`, `reparation`, `certification` |
-| **Type alerte**        | `maintenance_prevue`, `inspection_requise`, `assurance_expiration`      |
+### 4.2 Types et catégories
 
-### 4.3 Endpoints livraisons
+| Champ | Valeurs |
+|-------|---------|
+| Type de livraison | Fournisseur, Chantier, Transfert, Retour, Collecte |
+| Catégorie d'équipement | Grue, Excavatrice, Chargeuse, Échafaudage, Compacteur, Bétonnière, Génératrice, Autre |
+| Type de possession | Propriété (`propriete`, défaut), Location (`location`) |
+| Type de véhicule | Camionnette, Camion léger, Camion lourd, Fourgonnette, Remorque, Voiture, Autre |
+| Unité de capacité | kg (défaut), lb, tonnes |
+| Type d'activité de coordination | Livraison béton, Livraison matériaux, Arrivée grue, Coulée béton, Installation équipement, Inspection, Réunion de chantier, Fermeture de rue, Autre |
+| Type d'intervention de maintenance | Maintenance préventive (défaut), Inspection, Réparation, Certification |
+| Type d'alerte | `maintenance_prevue`, `inspection_requise`, `assurance_expiration` |
 
-| Methode | URL                                                    | Role                                |
-|---------|--------------------------------------------------------|-------------------------------------|
-| GET     | `/logistics/deliveries`                                | Liste paginee + filtre statut       |
-| GET     | `/logistics/deliveries/{id}`                           | Detail livraison + items[]          |
-| POST    | `/logistics/deliveries`                                | Creer livraison (auto reference)    |
-| PUT     | `/logistics/deliveries/{id}`                           | Modifier (whitelist : statut, notes)|
-| DELETE  | `/logistics/deliveries/{id}`                           | Supprimer (cascade items)           |
-| POST    | `/logistics/deliveries/{id}/items`                     | Ajouter item                        |
-| DELETE  | `/logistics/deliveries/{id}/items/{itemId}`            | Retirer item                        |
+### 4.3 Endpoints — Livraisons (`secondary.py`)
 
-### 4.4 Endpoints equipements + maintenance + reservations
+Préfixe : `/api/erp/v1`. Colonne « UI » = accessible depuis l'écran.
 
-| Methode | URL                                                    | Role                                |
-|---------|--------------------------------------------------------|-------------------------------------|
-| GET     | `/logistics/equipment`                                 | Liste paginee + filtres categorie/statut |
-| GET     | `/logistics/equipment/{id}`                            | Detail equipement                   |
-| POST    | `/logistics/equipment`                                 | Creer (auto code EQP-NNNNN)         |
-| PUT     | `/logistics/equipment/{id}`                            | Modifier (whitelist : nom, categorie, statut, localisation, notes) |
-| DELETE  | `/logistics/equipment/{id}`                            | Supprimer (cascade reservations + maintenance) |
-| GET     | `/logistics/equipment/{id}/reservations`               | Liste reservations                  |
-| POST    | `/logistics/equipment/{id}/reservations`               | Creer reservation                   |
-| GET     | `/logistics/equipment/{id}/maintenance`                | Historique maintenance              |
-| POST    | `/logistics/equipment/{id}/maintenance`                | Ajouter intervention (+ propage prochaine_date) |
-| PUT     | `/logistics/maintenance/{id}`                          | Modifier intervention               |
-| DELETE  | `/logistics/maintenance/{id}`                          | Supprimer intervention              |
-| GET     | `/logistics/maintenance/alertes`                       | Equipements avec maintenance/inspection due <= 7j |
+| Méthode | Chemin | Rôle requis | UI | Notes |
+|---------|--------|-------------|----|-------|
+| GET | `/logistics/deliveries` | lecture | Oui | Pagination (1-100/page), filtre statut. Crée la table à la demande. |
+| GET | `/logistics/deliveries/{id}` | lecture | **Non** | Livraison + ses articles. 404 si absente. |
+| POST | `/logistics/deliveries` | écriture | Oui | Génère `LIV-#####`. `date_prevue` obligatoire. |
+| PUT | `/logistics/deliveries/{id}` | écriture | Oui (statut) | Mise à jour partielle. 400 si aucun champ, 404 si absente. |
+| DELETE | `/logistics/deliveries/{id}` | écriture | Oui | 404 si absente. |
+| POST | `/logistics/deliveries/{id}/items` | écriture | **Non** | Ajoute un article. |
+| DELETE | `/logistics/deliveries/{id}/items/{item_id}` | écriture | **Non** | Retire un article. |
 
-### 4.5 Endpoints vehicules + trips
+### 4.4 Endpoints — Équipements, maintenance, réservations
 
-| Methode | URL                                                    | Role                                |
-|---------|--------------------------------------------------------|-------------------------------------|
-| GET     | `/logistics/vehicles`                                  | Liste (sans pagination)             |
-| POST    | `/logistics/vehicles`                                  | Creer vehicule                      |
-| PUT     | `/logistics/vehicles/{id}`                             | Modifier (whitelist : statut, kilometrage, notes) |
-| DELETE  | `/logistics/vehicles/{id}`                             | Supprimer (cascade trips)           |
-| GET     | `/logistics/vehicles/{id}/trips`                       | Historique trips                    |
-| POST    | `/logistics/vehicles/{id}/trips`                       | Creer trip (date_depart = NOW)      |
+| Méthode | Chemin | Rôle | UI | Notes |
+|---------|--------|------|----|-------|
+| GET | `/logistics/equipment` | lecture | Oui | Pagination + filtres catégorie/statut. |
+| GET | `/logistics/equipment/{id}` | lecture | **Non** | Fiche complète. |
+| POST | `/logistics/equipment` | écriture | Oui | Génère `EQP-#####`. `nom` obligatoire. |
+| PUT | `/logistics/equipment/{id}` | écriture | Oui (statut) | Mise à jour partielle. 404. |
+| DELETE | `/logistics/equipment/{id}` | écriture | Oui | 404. |
+| GET | `/logistics/equipment/{id}/reservations` | lecture | **Non** | Liste des réservations. |
+| POST | `/logistics/equipment/{id}/reservations` | écriture | **Non** | Refus de chevauchement (**409**), 404 si équipement absent. |
+| GET | `/logistics/maintenance/alertes` | lecture | **Non** | Équipements dont maintenance/inspection ≤ aujourd'hui + 7 jours. |
+| GET | `/logistics/equipment/{id}/maintenance` | lecture | Oui | Historique des interventions. |
+| POST | `/logistics/equipment/{id}/maintenance` | écriture | Oui | Crée l'intervention ; propage `prochaine_date`. 404. |
+| PUT | `/logistics/maintenance/{id}` | écriture | **Non** | Modifie une intervention ; repropage l'échéance. 404. |
+| DELETE | `/logistics/maintenance/{id}` | écriture | Oui | Recalcule l'échéance de l'équipement. 404. |
 
-### 4.6 Endpoints coordination + alertes + IA + statistiques
+### 4.5 Endpoints — Véhicules et trajets
 
-| Methode | URL                                                    | Role                                |
-|---------|--------------------------------------------------------|-------------------------------------|
-| GET     | `/logistics/coordination`                              | Liste paginee + filtres project/statut |
-| POST    | `/logistics/coordination`                              | Creer (auto reference COORD-NNNNN)  |
-| PUT     | `/logistics/coordination/{id}`                         | Modifier (whitelist : statut, notes)|
-| DELETE  | `/logistics/coordination/{id}`                         | Supprimer                           |
-| GET     | `/logistics/alerts`                                    | Liste alertes (filtre statut/priorite, top 50) |
-| PUT     | `/logistics/alerts/{id}`                               | Marquer traitee (auto-set date_traitement) |
-| POST    | `/logistics/alerts/generate`                           | Generation idempotente (3 sources)  |
-| POST    | `/logistics/ia/analyser`                               | IA Opus -> JSON score 0-100         |
-| POST    | `/logistics/ia/chat`                                   | IA Sonnet -> reponse texte libre    |
-| POST    | `/logistics/ia/rapport`                                | IA Sonnet -> rapport Markdown 8 sections |
-| POST    | `/logistics/ia/optimiser`                              | IA Sonnet -> recommandation JSON    |
-| GET     | `/logistics/statistics`                                | KPI consolides (4 categories)       |
+| Méthode | Chemin | Rôle | UI | Notes |
+|---------|--------|------|----|-------|
+| GET | `/logistics/vehicles` | lecture | Oui | Filtre statut. En cas d'erreur interne, renvoie une **liste vide** (jamais 500). |
+| POST | `/logistics/vehicles` | écriture | Oui | `immatriculation` unique, année 1900-2100. |
+| PUT | `/logistics/vehicles/{id}` | écriture | Oui (statut) | Modifie statut / kilométrage / notes seulement. |
+| DELETE | `/logistics/vehicles/{id}` | écriture | Oui | 404. |
+| GET | `/logistics/vehicles/{id}/trips` | lecture | **Non** | Trajets, tri par date de départ. |
+| POST | `/logistics/vehicles/{id}/trips` | écriture | **Non** | Départ = maintenant. 404 si véhicule absent. |
 
-### 4.7 Tables PostgreSQL
+### 4.6 Endpoints — Coordination, alertes, statistiques
 
-| Table                                  | Role                                                |
-|----------------------------------------|-----------------------------------------------------|
-| `logistics_deliveries`                 | Livraisons (auto reference UNIQUE)                  |
-| `logistics_delivery_items`             | Items detailles par livraison (FK CASCADE)          |
-| `logistics_equipment`                  | Equipements (auto code UNIQUE)                      |
-| `logistics_equipment_reservations`     | Reservations equipement par projet (FK CASCADE)     |
-| `logistics_equipment_maintenance`      | Historique interventions (FK CASCADE)               |
-| `logistics_vehicles`                   | Flotte (immatriculation UNIQUE)                     |
-| `logistics_vehicle_trips`              | Trips append-only (FK CASCADE)                      |
-| `logistics_site_coordination`          | Activites chantier coordonnees (auto reference)     |
-| `logistics_alerts`                     | Alertes preventives (idempotent generation)         |
+| Méthode | Chemin | Rôle | UI | Notes |
+|---------|--------|------|----|-------|
+| GET | `/logistics/coordination` | lecture | Oui | Pagination + filtres projet/statut. |
+| POST | `/logistics/coordination` | écriture | Oui | Génère `COORD-#####`. Date + type obligatoires. |
+| PUT | `/logistics/coordination/{id}` | écriture | Oui (statut) | Modifie statut / notes. 404. |
+| DELETE | `/logistics/coordination/{id}` | écriture | Oui | 404. |
+| GET | `/logistics/statistics` | lecture | Oui | Compteurs consolidés ; `km_total` = somme des kilométrages. |
+| GET | `/logistics/alerts` | lecture | Oui | Filtres statut (défaut `active`) et priorité, 50 au maximum. |
+| PUT | `/logistics/alerts/{id}` | écriture | **Non** | Marque traitée ; pose l'horodatage de traitement. 404. |
+| POST | `/logistics/alerts/generate` | écriture | **Non** | Génère les alertes (3 sources, sans doublon). |
 
-### 4.8 Champs cles tables principales
+### 4.7 Endpoints — Flotte GPS (`gps.py`)
 
-**`logistics_equipment`** (cles) : `id`, `code` (UNIQUE EQP-NNNNN), `nom` (NOT NULL), `description`, `categorie`, `type_possession` (propriete/location), `fournisseur_location_id`, `cout_journalier`, `cout_mensuel`, `date_acquisition`, `date_fin_location`, `valeur_achat`, `statut` (defaut disponible), `localisation_actuelle`, `project_id_actuel`, `prochaine_maintenance` (alertes auto), `prochaine_inspection` (alertes auto), `heures_utilisation`, `notes`, `created_at`, `updated_at`.
+| Méthode | Chemin | Rôle | UI | Notes |
+|---------|--------|------|----|-------|
+| GET | `/gps/vehicles` | lecture | Oui | Véhicules + dernière position (jointure sur `gps_vehicle_tracking`). |
+| GET | `/gps/vehicles/{id}/history` | lecture | **Non** | Historique, `hours` de 1 à 168 (défaut 24). |
+| GET | `/gps/locations` | lecture | Oui | Lieux enregistrés. |
+| POST | `/gps/locations` | **aucune garde de rôle** | Oui | Tout utilisateur authentifié peut créer un lieu. |
+| GET | `/gps/geofences` | lecture | Oui | Zones. |
+| POST | `/gps/geofences` | **aucune garde de rôle** | **Non** | Création possible par l'API, sans écran. |
+| GET | `/gps/routes` | lecture | Oui | Routes du jour (ou d'une date). |
 
-**`logistics_vehicles`** (cles) : `id`, `immatriculation` (UNIQUE), `marque`, `modele`, `annee`, `type_vehicule`, `capacite_charge`, `unite_capacite`, `kilometrage`, `consommation_moyenne` (L/100km), `cout_km`, `statut` (defaut disponible), `conducteur_attritre_id`, `date_prochain_entretien`, `date_prochaine_inspection`, `assurance_expiration` (alertes auto), `notes`, `created_at`, `updated_at`.
+> **`gps.py` ne crée pas ses tables à la demande.** Sur un tenant dont les tables `gps_*` n'existent pas encore, ces endpoints peuvent renvoyer une erreur serveur (contrairement aux endpoints `logistics/*`, qui créent leur table au besoin).
 
-**`logistics_alerts`** (cles) : `id`, `type_alerte` (maintenance_prevue / inspection_requise / assurance_expiration), `reference_type` (equipment | vehicle), `reference_id` (FK logique), `message` (NOT NULL), `priorite` (defaut normale), `date_alerte`, `date_echeance`, `statut` (defaut active), `traite_par`, `date_traitement`.
+### 4.8 Assistant IA — paramètres, gardes et coût (`logistique_ai.py`)
 
-### 4.9 Validations & limites
+| Aspect | Détail |
+|--------|--------|
+| Endpoint | `POST /api/erp/v1/logistique/ai/chat` |
+| Modèle | `claude-sonnet-4-6` |
+| Longueur maximale de réponse | 8000 jetons |
+| Outils | **un seul** : `recherche_bd` (requête SQL de **lecture seule**) |
+| Boucle d'outils | jusqu'à 5 itérations par message |
+| Historique conservé | 12 derniers tours, tronqués à 8000 caractères chacun |
+| Contexte injecté | résumé des données logistiques du tenant, plafonné à 8000 caractères |
+| Langue | français du Québec par défaut, anglais si la langue de l'interface est l'anglais |
 
-| Regle                                      | Effet                                                  |
-|--------------------------------------------|--------------------------------------------------------|
-| `immatriculation` doublon vehicule         | HTTP 500 (UNIQUE constraint, pas de message custom)    |
-| `code` doublon equipement                  | Tres rare car genere aleatoire EQP-NNNNN (collision possible mais peu probable) |
-| `reference` doublon livraison              | Idem (LIV-NNNNN aleatoire)                             |
-| Update sans champs                         | HTTP 400 « Aucun champ a mettre a jour »               |
-| DELETE entite inexistante                  | HTTP 404                                               |
-| IA sans credits                            | HTTP 402 « Credits IA insuffisants »                   |
-| IA sans acces tenant                       | HTTP 403                                               |
-| IA service indispo                         | HTTP 503                                               |
-| IA payload trop volumineux (>413)          | HTTP 413                                               |
-| IA Anthropic surcharge (529)               | HTTP 503                                               |
-| Reservation chevauchante                   | **Aucune validation** (autorise)                       |
-| Trip cloture (`km_retour`)                 | **Pas d endpoint PUT** — append-only                   |
-| Update livraison hors `statut/notes`       | Champs ignores (whitelist serree)                      |
-| Update equipement hors 5 champs            | Champs ignores (whitelist : nom/categorie/statut/localisation/notes) |
-| Update vehicule hors 3 champs              | Champs ignores (whitelist : statut/kilometrage/notes)  |
+**Tables lisibles par l'assistant** : `logistics_deliveries`, `logistics_delivery_items`, `logistics_equipment`, `logistics_equipment_reservations`, `logistics_equipment_maintenance`, `logistics_vehicles`, `logistics_vehicle_trips`, `logistics_site_coordination`, `logistics_alerts`, plus `projects` et `companies`. **Tables interdites** (refus par filtre) : employés, paie, salaires, NAS, utilisateurs, crédits IA, Stripe, jetons, etc. Les références qualifiées par un schéma sont refusées (protection contre l'accès à un autre tenant).
 
-### 4.10 Format references auto-generees + priorite alertes
+**Gardes, dans l'ordre** :
 
-**References** (source : `_gen_numero(prefix)` -> `f"{prefix}-{random.randint(10000, 99999)}"`) : Livraison `LIV-NNNNN`, Equipement `EQP-NNNNN`, Coordination `COORD-NNNNN`. **Aleatoires** (pas sequentiels). Risque de collision faible (~1/90000) — UNIQUE rejette en DB si doublon.
+1. Service IA non configuré → **503**.
+2. Contrôle d'accès IA `check_ai_guard` → **neutre en pratique** : il laisse passer tout utilisateur authentifié (`ai.py:824-825`, « allow all authenticated users »).
+3. Crédits épuisés → **402** « Crédits IA épuisés ».
 
-**Logique priorite alerte** :
-- `maintenance_prevue` / `inspection_requise` : `haute` si echeance <= +2 jours, sinon `normale` (toujours <= +7 jours).
-- `assurance_expiration` : `haute` si echeance <= +7 jours, sinon `normale` (toujours <= +30 jours).
+**Coût** : `(jetons_entrée × 0,003 + jetons_sortie × 0,015) ÷ 1000 × 1,30` (tarif du modèle **majoré de 30 %**). Le débit est **ferme** et le message est tracé sous `logistique_chat` dans `public.ai_usage_tracking`.
 
-**Couleurs statut frontend** (source : `LogistiquePage.tsx:117-125` `statutColor`) : `green` (livr/dispon/termin/complet), `blue` (en_cours/en_dep/activ/en_util), `yellow` (planif/reserv), `red` (annul/hors), `purple` (maint), `gray` (autre).
+> **Deux assistants IA existent dans le code, un seul est branché.** L'écran utilise `logistique_ai.py` (`/logistique/ai/chat`, ci-dessus). Les quatre anciens endpoints `POST /logistics/ia/analyser`, `/chat`, `/rapport`, `/optimiser` (dans `secondary.py`) ont bien des fonctions côté client mais **ne sont appelés par aucun écran** — ils sont **morts**. Ne comptez pas dessus.
 
----
+### 4.9 Tables PostgreSQL (par tenant)
 
-## 5. Integrations & FAQ
+| Table | Rôle | Créée à la demande ? |
+|-------|------|----------------------|
+| `logistics_deliveries` | Livraisons (`reference` unique) | Oui |
+| `logistics_delivery_items` | Articles de livraison (cascade à la suppression de la livraison) | Oui |
+| `logistics_equipment` | Équipements (`code` unique) | Oui |
+| `logistics_equipment_reservations` | Réservations (cascade) | Oui |
+| `logistics_equipment_maintenance` | Interventions de maintenance (cascade) | Oui |
+| `logistics_vehicles` | Flotte (`immatriculation` unique) | Oui |
+| `logistics_vehicle_trips` | Trajets (cascade) | Oui |
+| `logistics_site_coordination` | Activités de coordination (`reference` unique) | Oui |
+| `logistics_alerts` | Alertes préventives | Oui |
+| `gps_vehicle_tracking` | Positions horodatées des véhicules | **Non** |
+| `gps_locations` | Lieux enregistrés | **Non** |
+| `gps_geofences` | Zones | **Non** |
+| `gps_routes` | Routes | **Non** |
 
-### 5.1 Integration Projets (Module 1)
+### 4.10 Rôles d'écriture et permissions
 
-- **References faibles** : `delivery.project_id`, `equipment.project_id_actuel`, `reservation.project_id`, `trip.project_id`, `coordination.project_id` -> FK logiques vers `projects.id`.
-- **Pas de cascade** : delete projet ne supprime PAS les entites Logistique liees (les `project_id` deviennent orphelins).
-- **Pas de jointure** dans les listes : `project_id` brut, frontend doit resoudre les noms via `GET /projects/{id}`.
+- **Rôles d'écriture logistique** (`LOGISTICS_WRITE_ROLES`, `secondary.py:44`) : `admin`, `super_admin`, `gestionnaire`, `contremaitre`, `magasinier`. Un compte marqué `is_admin` (droit relu au serveur) est toujours autorisé. Tout autre rôle en écriture → **403**.
+- **Lectures** : ouvertes à tout utilisateur authentifié du tenant.
+- **Écritures GPS** (`POST /gps/locations`, `POST /gps/geofences`) : **aucune** garde de rôle — tout utilisateur authentifié peut créer un lieu ou une zone (incohérence connue par rapport aux écritures logistiques).
+- **Mode consultation** : un tenant sans abonnement Stripe actif voit **toutes** ses écritures (y compris GPS) refusées en **403**, les lectures restant permises.
 
-### 5.2 Integration CRM / Fournisseurs (Module 3)
+### 4.11 Numéros automatiques, règles d'alerte et de réservation
 
-- `delivery.fournisseur_id` -> FK logique vers `companies.id`. Pas de jointure auto.
-- `equipment.fournisseur_location_id` (DB seulement, non expose UI) -> idem.
+- **Numéros de référence** : `LIV-#####`, `EQP-#####`, `COORD-#####`. Le serveur tire un numéro et le teste contre la contrainte d'**unicité** (jusqu'à 8 essais, puis élargit l'entropie). La contrainte d'unicité reste le garde-fou final : deux références identiques ne peuvent jamais exister.
+- **Chevauchement de réservation d'équipement** : à la création d'une réservation, le serveur pose un verrou sur l'équipement (avec délai maximal de 5 secondes) et vérifie qu'aucune réservation non annulée ne recoupe la période demandée ; sinon il renvoie **409**. La période doit avoir une fin postérieure ou égale au début (sinon **422**). Cette protection existe **au niveau serveur** ; il n'y a pas d'écran pour la déclencher.
+- **Génération des alertes** (`POST /logistics/alerts/generate`, sans doublon actif) :
 
-### 5.3 Integration Inventaire (Module 10)
+| Source | Condition | Type d'alerte | Priorité |
+|--------|-----------|---------------|----------|
+| Maintenance d'équipement | `prochaine_maintenance` ≤ aujourd'hui + 7 jours | `maintenance_prevue` | **haute** si ≤ +2 jours, sinon `normale` |
+| Inspection d'équipement | `prochaine_inspection` ≤ aujourd'hui + 7 jours | `inspection_requise` | **haute** si ≤ +2 jours, sinon `normale` |
+| Assurance de véhicule | `assurance_expiration` ≤ aujourd'hui + 30 jours | `assurance_expiration` | **haute** si ≤ +7 jours, sinon `normale` |
 
-- `delivery_items.inventory_item_id` (DB) -> FK logique vers `produits.id`.
-- **Pas de mise a jour stock auto** au passage `livree` : creation manuelle separee de mouvements ENTREE (cf. Module 10 workflow 3.3). Bonne pratique : referencer `LIV-NNNNN` dans le motif.
+- **Propagation de maintenance** : créer, modifier ou supprimer une intervention met à jour ou recalcule automatiquement l'échéance `prochaine_maintenance` de l'équipement.
 
-### 5.4 Integration Comptabilite (Module 7)
+### 4.12 Limites de débit (par adresse IP)
 
-- **Aucune integration directe**. Les couts (cout journalier equipement, cout carburant trip, cout maintenance) ne sont PAS convertis en ecritures de journal. Comptabilisation manuelle dans Module 7 ou export CSV.
+| Endpoint | Limite |
+|----------|--------|
+| `POST /logistique/ai/chat` (assistant actif) | 20 par minute |
+| `POST /logistics/ia/*` (endpoints IA morts) | 10 par minute |
+| Endpoints de gestion, statistiques et GPS | borne générale élevée (≈ 1500 par minute) |
 
-### 5.5 Integration Maintenance (Module 24)
+### 4.13 Raccourcis clavier (assistant IA)
 
-> **Chevauchement controle** : Logistique gere la maintenance des **equipements de la flotte logistique** (camions, grues, excavatrices) via `logistics_equipment_maintenance`. Module **24 Maintenance** couvre la maintenance generale des **equipements chantier** au sens large avec fiches d intervention plus complexes.
-
-**Quand utiliser quel module ?**
-- **Logistique > Equipements > Maintenance** : equipement de la flotte interne. Workflow integre avec alertes auto + propagation `prochaine_date`.
-- **Module 22 Maintenance** : suivi global, fiches detaillees, planification long terme, BT multi-equipements, certifications complexes.
-
-> Les deux modules ne partagent pas la meme table. Pour une vue consolidee, consulter chaque module separement.
-
-### 5.6 Integration Location (Module 23)
-
-> **Chevauchement controle** : Logistique gere les **equipements possedes ou loues PAR l entreprise** (champ `type_possession`). Module **23 Location** gere les **contrats de location** que l entreprise propose A SES CLIENTS (sortante) ou contracte CHEZ SES FOURNISSEURS (entrante).
-
-**Quand utiliser quel module ?**
-- **Logistique > Equipements** : declarer un equipement disponible dans la flotte interne, gerer reservations par projet et maintenance.
-- **Module 21 Location** : creer un contrat formel (`location_contrats`) avec lignes facturees TPS/TVQ, dates sortie/retour, caution, retours, dommages.
-
-> Tables distinctes : `logistics_equipment` (Logistique) vs `location_items` + `location_contrats` (Location).
-
-### 5.7 Integration GPS / Carte
-
-- L onglet **GPS** de Logistique consomme directement `GET /api/gps/*` (module GPS separe).
-- Modification des positions / geofences / routes : faire dans le module GPS dedie.
-- L association vehicule Logistique <-> vehicule GPS se fait par `immatriculation` (champ commun, pas FK explicite).
-
-### 5.8 Integration IA Claude
-
-- 4 endpoints dedies (`/logistics/ia/analyser`, `/chat`, `/rapport`, `/optimiser`).
-- Tous gardes par `check_ai_guard()` + `_check_credits()`.
-- Modeles : Opus 4 (analyser) ou Sonnet 4 (chat / rapport / optimiser).
-- Tracking dans `ai_usage` table (feature = `logistique_*`).
-- Markup cout : +30% sur les prix Anthropic.
-- **Prompt systeme** : expert logistique construction Quebec (SAAQ, MTQ, CNESST, reglements municipaux livraisons, heures autorisees).
-
-### 5.9 FAQ
-
-**Q : Une livraison `livree` met-elle automatiquement a jour le stock dans Inventaire ?**
-R : **NON**. Apres reception physique, creer manuellement un mouvement ENTREE dans Module 10 avec reference `LIV-NNNNN` dans le motif.
-
-**Q : Peut-on planifier des livraisons recurrentes (ex. beton chaque vendredi) ?**
-R : **NON**. Pas de templates ni de regle de recurrence. Saisir manuellement chaque livraison ou utiliser un script API.
-
-**Q : Comment generer un bon de livraison PDF ?**
-R : **Pas implemente**. Aucun export PDF / impression natif. Pour un BL papier, utiliser un module externe ou exporter via API.
-
-**Q : Le module bloque-t-il deux reservations sur les memes dates ?**
-R : **NON**. Aucune validation de chevauchement. Verifier visuellement la liste des reservations avant de creer.
-
-**Q : Les heures d utilisation d un equipement (`heures_utilisation`) sont-elles incrementees automatiquement ?**
-R : **NON**. Champ DB present mais non incremente automatiquement par les reservations ou trips. Mise a jour manuelle requise via API.
-
-**Q : Comment recevoir une notification email quand une alerte est generee ?**
-R : **Pas d email automatique**. Les alertes sont stockees en base et affichees dans le tableau de bord. Pour notifier par email, integrer un cron + SMTP custom.
-
-**Q : Les alertes sont-elles regeneerees automatiquement ?**
-R : **NON par defaut**. L appel `POST /logistics/alerts/generate` est manuel ou via cron job externe. Aucun planificateur interne.
-
-**Q : Une fois une alerte traitee, peut-elle etre regeneeree ?**
-R : **OUI**. La generation est idempotente uniquement sur les alertes `active`. Une alerte `traitee` n est plus consideree -> une nouvelle alerte du meme type peut etre creee si la condition est encore vraie. Bonne pratique : reporter `prochaine_maintenance` apres l intervention.
-
-**Q : Le module gere-t-il les conducteurs et leurs permis ?**
-R : **PARTIELLEMENT**. Champ `conducteur_attritre_id` existe en DB mais non expose dans l UI. Pas de gestion classes de permis ni dates expiration cote Logistique. Utiliser Module Employes.
-
-**Q : Comment integrer Google Maps / route GPS ?**
-R : **Pas integre dans Logistique**. Le module GPS associe consomme des donnees brutes de positions. Pour un calcul d itineraire ou une carte, prevoir un module Carte dedie ou un service externe.
-
-**Q : Combien de livraisons / equipements maximum supportes ?**
-R : Pas de limite hard-codee. Pagination 20/page. Pour > 1000 entites, prevoir des index DB sur `statut`, `categorie`, `created_at`.
-
-**Q : Les coordinations chantier ont-elles une integration calendrier (iCal) ?**
-R : **NON**. Aucune sortie iCal / Google Calendar. Ajouter manuellement au Calendrier (`/calendar`).
-
-**Q : Comment cloturer un trip vehicule (km_retour, cout_carburant, date_retour) ?**
-R : **Pas d endpoint PUT trip**. Les trips sont append-only. Limitation actuelle — modifier en base si besoin.
-
-**Q : Les couts journaliers / mensuels equipement servent-ils a quelque chose ?**
-R : **Affichage uniquement** dans la liste. Pas d agregation automatique vers Comptabilite. Donnees a exploiter via analyses externes.
-
-**Q : Peut-on uploader un document (photo, certificat) sur une intervention maintenance ?**
-R : Le champ `documents` existe sur `logistics_equipment_maintenance` (texte URL/chemin) mais pas d upload binaire. Stocker l URL d un fichier heberge ailleurs (Module 8 Dossiers, Drive externe).
+| Touche | Effet |
+|--------|-------|
+| Entrée | Envoyer le message |
+| Maj + Entrée | Insérer un saut de ligne |
 
 ---
 
-## 6. Recap one-pager
+## 5. Intégrations et FAQ
 
-- **6 onglets** : Tableau de bord / Livraisons / Equipements / Vehicules / Coordination / GPS-Carte.
-- **9 tables** : `logistics_deliveries`, `logistics_delivery_items`, `logistics_equipment`, `logistics_equipment_reservations`, `logistics_equipment_maintenance`, `logistics_vehicles`, `logistics_vehicle_trips`, `logistics_site_coordination`, `logistics_alerts`.
-- **35+ endpoints** `/logistics/*` (CRUD + maintenance + reservations + trips + alerts + 4 IA + statistics).
-- **4 statuts livraison** : `planifiee` -> `en_cours` -> `livree` / `annulee`.
-- **4 statuts equipement** : `disponible` / `en_utilisation` / `maintenance` / `reserve`.
-- **4 statuts vehicule** : `disponible` / `en_deplacement` / `maintenance` / `hors_service`.
-- **4 statuts coordination** : `planifie` / `en_cours` / `termine` / `annule`.
-- **3 types alerte** : `maintenance_prevue` / `inspection_requise` / `assurance_expiration`.
-- **2 priorites** : `haute` (urgent <= 2j ou 7j selon type) / `normale`.
-- **Auto-generation references** : `LIV-NNNNN`, `EQP-NNNNN`, `COORD-NNNNN` (random 10000-99999).
-- **Whitelists PUT serrees** :
-  - Livraison : `statut`, `notes`
-  - Equipement : `nom`, `categorie`, `statut`, `localisation_actuelle`, `notes`
-  - Vehicule : `statut`, `kilometrage`, `notes`
-  - Coordination : `statut`, `notes`
-- **Cascade FK** : delete livraison -> delete items ; delete equipement -> delete reservations + maintenance ; delete vehicule -> delete trips.
-- **Maintenance equipement** : INSERT propage `prochaine_date` sur `equipment.prochaine_maintenance` (declenche alertes auto).
-- **Generation alertes idempotente** : `POST /logistics/alerts/generate` (pas de doublons, basee sur 3 sources : maintenance / inspection / assurance).
-- **4 endpoints IA** :
-  - `analyser` (Opus 4) -> JSON score 0-100
-  - `chat` (Sonnet 4) -> reponse libre
-  - `rapport` (Sonnet 4) -> Markdown 8 sections
-  - `optimiser` (Sonnet 4) -> JSON recommandation
-- **Onglet GPS** : LECTURE SEULE des donnees `gps_*` (module separe), sauf creation de Lieux possible inline.
-- **PAS de PUT trip** (append-only). **PAS de detection conflit reservation**. **PAS de notification email** alertes. **PAS d integration Maps** automatique. **PAS d auto-update stock** Inventaire. **PAS d ecriture journal** auto Comptabilite.
-- **Modele IA** : Opus 4 + Sonnet 4 (markup +30% cout). Anthropic API guardee par `check_ai_guard` + `_check_credits`.
+### 5.1 Projets et fournisseurs (références faibles)
+
+- Les livraisons, équipements, réservations, trajets et activités peuvent porter un `project_id` (et une livraison un `fournisseur_id`) **en base**, mais l'interface **ne propose pas** de les saisir. Ce sont des liens logiques vers `projects.id` et `companies.id`, **sans** jonction affichée ni cascade : supprimer un projet ne touche pas aux fiches de logistique.
+- L'assistant IA peut, lui, lire les tables `projects` et `companies` pour recouper vos données.
+
+### 5.2 Magasin / Inventaire (Module 10)
+
+- Le champ `inventory_item_id` d'un article de livraison peut pointer vers un produit du Magasin, mais **il n'y a pas d'écran** pour saisir les articles, et **aucune mise à jour de stock** n'est déclenchée au passage d'une livraison à « livrée ».
+- **Bonne pratique** : après réception physique, créez manuellement un mouvement d'entrée dans le Magasin (Module 10) en citant la référence `LIV-#####` dans le motif.
+
+### 5.3 Maintenance (Module 22) — chevauchement de périmètre
+
+- **Logistique → Équipements → Maintenance** couvre la maintenance des **équipements de la flotte logistique** (grues, excavatrices, camions), avec propagation automatique de l'échéance et alimentation des alertes.
+- **Module 22 (Maintenance)** couvre la maintenance générale de chantier avec des fiches d'intervention plus riches.
+- Les deux modules ne partagent pas les mêmes tables. Pour une vue consolidée, consultez chaque module séparément.
+
+### 5.4 Location (Module 21) — chevauchement de périmètre
+
+- **Logistique → Équipements** déclare les équipements **possédés ou loués par l'entreprise** (champ « Type de possession ») pour un usage interne.
+- **Module 21 (Location)** gère les **contrats de location** proposés aux clients ou contractés chez des fournisseurs, avec facturation (TPS/TVQ), cautions et retours. Tables distinctes.
+
+### 5.5 Module GPS
+
+- L'onglet « GPS / Trajets » consomme les endpoints `/gps/*` (mêmes tables `gps_*`). Le lien entre un véhicule de la flotte et sa trace GPS se fait par la table `logistics_vehicles` (partagée par les deux listes).
+- **Deux listes de véhicules lisent la même table** : l'onglet Véhicules (liste simple) et le sous-onglet Véhicules GPS (avec la dernière position). C'est une redondance normale, pas un doublon de données.
+
+### 5.6 Crédits IA (Module 25)
+
+- L'assistant logistique partage le **même portefeuille de crédits IA** que les autres assistants de l'ERP.
+- Chaque message est tracé sous la fonctionnalité `logistique_chat`, visible dans le suivi d'usage IA du super-administrateur.
+
+### 5.7 Foire aux questions
+
+**Puis-je générer un bon de livraison en PDF ?**
+Non. Le module n'a aucune exportation ni impression. Aucun PDF, aucun CSV.
+
+**Comment modifier le type ou la zone d'une livraison déjà créée ?**
+Ce n'est pas possible depuis l'interface : seuls le **statut** (menu en ligne) et la **suppression** sont offerts. Supprimez et recréez la livraison. Même règle pour les équipements, véhicules et activités.
+
+**Où sont les articles détaillés d'une livraison ?**
+Il n'y a pas d'écran pour eux. Le serveur sait les stocker (description, quantités, unité, conformité), mais aucune interface ne permet de les saisir ni de les voir.
+
+**Comment réserver un équipement pour un projet ?**
+Pas depuis l'interface. Les réservations (avec refus de chevauchement) existent côté serveur mais n'ont pas d'écran. Contournement : passez l'équipement au statut « Réservé » ou consignez la période dans les notes.
+
+**Le module empêche-t-il deux réservations sur les mêmes dates ?**
+Oui, **côté serveur** : une réservation qui recoupe une autre est refusée (erreur 409). Mais comme il n'y a pas d'écran de réservation, cette protection n'est pas visible à l'usage.
+
+**Comment enregistrer un déplacement de véhicule (départ, retour, carburant) ?**
+Pas d'écran. Malgré les onglets « Trajets » et « GPS / Trajets », les trajets de véhicule ne sont pas exposés.
+
+**Pourquoi l'onglet « Trajets » montre-t-il de la coordination de chantier et non des trajets ?**
+C'est un libellé hérité d'une ancienne conception. L'onglet « Trajets » gère la **coordination de chantier** ; l'onglet « GPS / Trajets » gère la **flotte GPS**. Le vrai concept de trajet de véhicule n'a aucun onglet.
+
+**Y a-t-il une carte des véhicules ?**
+Non. L'onglet GPS affiche des latitudes et longitudes en texte, jamais une carte interactive.
+
+**Comment générer ou traiter une alerte ?**
+Le tableau de bord affiche les alertes en lecture. Il n'y a **aucun bouton** pour les générer ni les marquer traitées. La génération (maintenance/inspection à 7 jours, assurance à 30 jours) et le traitement existent côté serveur mais ne sont pas exposés.
+
+**Une livraison « livrée » met-elle le stock à jour dans le Magasin ?**
+Non. Aucune synchronisation. Créez le mouvement d'entrée manuellement dans le Magasin.
+
+**Les coûts (journalier, carburant, maintenance) alimentent-ils la comptabilité ?**
+Non. Ils sont affichés seulement, jamais convertis en écritures comptables.
+
+**Un tenant tout neuf affiche des compteurs à zéro : est-ce normal ?**
+Oui. Les tables `logistics_*` sont créées à la première saisie. Dès que vous créez une première livraison ou un premier équipement, les compteurs se remplissent.
+
+**L'onglet GPS renvoie une erreur sur un compte qui n'a jamais utilisé le GPS. Pourquoi ?**
+Parce que `gps.py` ne crée pas ses tables à la demande. Il faut que les tables `gps_*` existent (données GPS déjà reçues) pour que l'onglet réponde.
+
+**Qui peut créer et supprimer des fiches ?**
+Les rôles administrateur, super-administrateur, gestionnaire, contremaître et magasinier (ou tout compte `is_admin`). Les autres rôles obtiennent une erreur 403. Note : l'ajout de lieux et de zones GPS n'a **aucune** restriction de rôle.
+
+**L'assistant IA peut-il voir la paie ou les employés ?**
+Non. Il lit uniquement les tables de logistique, plus les projets et les entreprises. La paie, les employés, les salaires et les NAS lui sont interdits, et il n'écrit jamais.
+
+**Combien coûte une question à l'assistant ?**
+Le tarif du modèle `claude-sonnet-4-6` majoré de 30 %, débité de vos crédits IA. Le coût exact s'affiche sous chaque réponse. La consultation logistique, elle, est gratuite.
 
 ---
 
-**Documentation generee a partir du code** : `secondary.py` lignes 725-3571 (section /logistics/*), `LogistiquePage.tsx` (1373 lignes, 6 onglets), `logistics.ts`.
+## 6. Récapitulatif
 
-**Manuels lies** :
-- Module 1 (Projets — `project_id` references) — `01-projets.md`
-- Module 3 (CRM / Fournisseurs — `fournisseur_id` references) — `03-crm.md`
-- Module 10 (Inventaire — mouvements stock manuels apres livraison) — `10-inventaire.md`
-- Module 21 (Location — contrats clients/fournisseurs distincts) — `23-location.md`
-- Module 22 (Maintenance — fiches generales chantier) — `24-maintenance.md`
-- Module 23 (Carte / GPS — donnees positions vehicules) — manuel separe a venir
+- **Objet** : registre opérationnel de la logistique de chantier — livraisons, équipements (+ maintenance), véhicules, coordination, suivi GPS de flotte (lecture) — et un assistant IA de consultation.
+- **Accès** : barre latérale → groupe **TERRAIN** → **Logistique** (icône `Truck`), route `/logistique`. Onglet par défaut : Tableau de bord.
+- **7 onglets** : Tableau de bord, Livraisons, Équipements, Véhicules, **« Trajets »** (= coordination de chantier), **« GPS / Trajets »** (= flotte GPS), Assistant IA. Deux onglets portent le mot « Trajets », aucun ne gère les trajets de véhicule.
+- **3 routers côté serveur** : `secondary.py` (`/logistics/*`, 33 endpoints de gestion + statistiques, plus 4 endpoints IA **morts**), `gps.py` (`/gps/*`, 7 endpoints), `logistique_ai.py` (`/logistique/ai/chat`, l'assistant actif). Il n'existe **aucun** fichier `routers/logistique.py`.
+- **Tables** : `logistics_*` par tenant, **créées à la demande** (un tenant neuf voit des compteurs à zéro) ; `gps_*` par tenant, **non créées à la demande** (erreur possible sur un tenant sans données GPS).
+- **Permissions** : lecture ouverte à tous ; écriture réservée aux rôles administrateur / super-administrateur / gestionnaire / contremaître / magasinier (ou `is_admin`) ; les écritures GPS n'ont **aucune** garde de rôle ; mode consultation (lecture seule) si l'abonnement Stripe est inactif.
+- **Édition limitée** : sur une fiche existante, on ne peut que **changer le statut** (menu en ligne) et **supprimer**. Aucune fenêtre de modification complète.
+- **Numéros** : `LIV-#####`, `EQP-#####`, `COORD-#####`, garantis uniques par contrainte de base.
+- **Alertes** : trois sources (maintenance et inspection à 7 jours, assurance à 30 jours), priorité haute selon l'imminence — générées et traitées **côté serveur seulement**, affichées en lecture sur le tableau de bord.
+- **Réservations d'équipement** : refus de chevauchement (409) **côté serveur**, sans écran.
+- **Assistant IA** : chat de **lecture seule**, modèle `claude-sonnet-4-6`, 8000 jetons, outil unique `recherche_bd`, tables sensibles interdites, débit **ferme** des crédits IA (tarif du modèle majoré de 30 %, fonctionnalité `logistique_chat`). Le vrai gardien est le solde de crédits (402) ; `check_ai_guard` est neutre.
+- **Ce que le module ne fait pas** : aucune exportation / impression / CSV / PDF / téléversement / action groupée ; pas d'articles de livraison, de réservations, de trajets de véhicule, de création de zone GPS ni de génération d'alertes **dans l'interface** ; pas de carte ; pas de notifications ; pas de synchronisation stock ou comptable ; pas d'assistant qui écrit.
+
+---
+
+**Documentation générée à partir du code** : `ERP_REACT/backend/routers/secondary.py` (endpoints `/logistics/*`, DDL des tables `logistics_*`, règles d'alerte et de réservation) ; `ERP_REACT/backend/routers/gps.py` (372 lignes, endpoints `/gps/*`) ; `ERP_REACT/backend/routers/logistique_ai.py` (331 lignes, assistant `/logistique/ai/chat`) ; `ERP_REACT/backend/erp_auth.py` (gardes `require_tenant_admin_or_role`, mode consultation) ; `ERP_REACT/frontend/src/pages/LogistiquePage.tsx` (1417 lignes, 7 onglets) ; `ERP_REACT/frontend/src/components/logistique/LogistiqueAssistantTab.tsx` (151 lignes) ; `ERP_REACT/frontend/src/api/logistics.ts`, `api/gps.ts`, `api/logistiqueAi.ts` ; textes sous `i18n/locales/fr/terrain.json` (sous-section `logistique.*`) et `i18n/locales/fr/logistiqueAssistant.json`.
+
+**Manuels liés** :
+- Module 09 (Projets — références `project_id` faibles) — `09-ventes-projets.md`
+- Module 04 (Entreprises / fournisseurs — références `fournisseur_id`) — `04-gestion-entreprises.md`
+- Module 10 (Magasin / Inventaire — mouvements de stock manuels après livraison) — `10-operations-magasin.md`
+- Module 21 (Location — contrats clients/fournisseurs distincts) — `21-terrain-location.md`
+- Module 22 (Maintenance — fiches générales de chantier) — `22-terrain-maintenance.md`
+- Module 25 (Assistant IA — portefeuille de crédits partagé) — `25-communication-assistant-ia.md`
