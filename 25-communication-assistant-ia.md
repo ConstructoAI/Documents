@@ -1,531 +1,528 @@
-# Module 25 — IA / Assistant Intelligent
+# Module 25 — Assistant IA (Claude, profils experts)
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/ai.py` (router central IA), `backend/routers/public_chat.py` (Sylvain chat pre-login), `backend/routers/stripe_routes.py` (recharge credits), `frontend/src/pages/AssistantIAPage.tsx`, autres modules avec IA integree (Module 7 scan facture, Module 8 notes IA, Module 19 immobilier 4 endpoints)
-> **Tables PostgreSQL (schema public)** : `ai_prepaid_credits`, `ai_usage_tracking`, `ai_conversations`
+> **Version** : 3.0 (refonte vérifiée ligne par ligne par rapport au code source, juillet 2026)
+> **Accès** : **barre supérieure** de l'ERP → bouton-icône « étincelle » (`Sparkles`) intitulé **« Assistant IA »**. **Ce module n'est PAS dans la barre latérale de gauche** (voir §1.2). Adresse directe : `/assistant-ia`.
+> **Code de référence (backend)** : `backend/routers/ai.py` (3541 lignes, 12 points d'accès ; moteur IA central de l'ERP) ; `backend/routers/ai_profiles.py` (804 lignes, 8 points d'accès ; sert **Estimation IA** et **Métré PDF**, pas ce module — voir §1.7) ; `backend/routers/data_import.py` (684 lignes ; import de clients)
+> **Code de référence (frontend)** : `frontend/src/pages/AssistantIAPage.tsx` (716 lignes) ; `frontend/src/components/ai/ClientImportModal.tsx` (243 lignes) ; `frontend/src/api/ai.ts` (175 lignes) + `frontend/src/api/dataImport.ts` (76 lignes)
+> **Libellés** : `i18n/locales/fr/ai.json` (126 lignes) + `i18n/locales/en/ai.json`
+> **Tables PostgreSQL partagées (`public`)** : `ai_prepaid_credits`, `ai_usage_tracking`, `ai_credit_applied_invoices`, `ai_credit_ledger`
+> **Tables PostgreSQL par entreprise (tenant)** : `conversations`, `conversation_messages`, `ai_profiles`, `ai_profile_documents`, `companies` (cible de l'import)
+> **Cadrage** : assistant conversationnel propulsé par **Claude (Anthropic)**, **branché sur les données de votre entreprise**. Il **lit** votre base (projets, factures, employés, devis, stock…) et peut aussi **y écrire** (créer, modifier, supprimer des enregistrements) au moyen de deux outils SQL. Il **analyse un document**, **analyse des plans** (lecture d'image / vision) et pilote un **assistant d'import de clients** depuis un fichier CSV ou Excel. **Ce module n'est pas conçu pour produire des estimations de coût** : pour cela, utilisez le module **Soumissions → Estimation IA** (voir §1.5 et §5.1).
+
+*Note de terminologie employée dans ce manuel :* « point d'accès » désigne un point de terminaison de l'interface de programmation (endpoint) ; « tenant » désigne votre entreprise (chaque entreprise a ses propres données isolées) ; « jeton » (token) est l'unité de facturation de l'IA (un mot vaut à peu près 1,3 jeton) ; « crédits prépayés » désigne le solde en dollars que votre entreprise consomme à chaque appel à l'IA.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface Assistant IA](#2-interface-assistant-ia)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference (modeles, couts, tools)](#4-reference)
-5. [Integrations & FAQ](#5-integrations-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
 ### 1.1 Mission du module
 
-Fournir un **assistant IA conversationnel** alimente par Claude (Anthropic) integre dans tout l ERP :
-- Chat avec **profil hardcode `general`** (les 6 profils existent backend mais ne sont pas selectionnables depuis l UI dans cette version — voir section 2.1.1)
-- **Function calling** : l IA peut interroger la base (`recherche_bd`) et executer des actions (`executer_action`) sur le tenant connecte
-- **Vision** : analyse d images / PDF (factures, plans, documents)
-- **Conversations persistees** par utilisateur (historique chargeable)
-- **Reponse JSON complete** (pas de streaming SSE cote client). Le backend utilise `with stream()` en interne pour consommer la reponse Anthropic, mais retourne le resultat final en une fois via `ChatResponse` Pydantic. L UI affiche la reponse complete d un coup (pas de rendering progressif). Pour un futur upgrade, il faudrait un endpoint `text/event-stream` et un `EventSource` cote client.
-- **Credits prepayes** en USD (charges auto via Stripe), tracking complet par feature
-- IA integree dans 6+ autres modules (factures scan, notes dossiers, analyse projet immobilier, chat pre-login marketing)
+L'Assistant IA est un **agent de dialogue** intégré à l'ERP. Vous lui écrivez une question ou une consigne en français (ou en anglais), et il répond en s'appuyant sur **les données réelles de votre entreprise**. Concrètement, il peut :
 
-### 1.2 Modeles Claude utilises
+- **Répondre à des questions sur vos données** : « Combien de projets sont en cours ? », « Quelles factures dépassent 5 000 $ et sont impayées ? », « Quel employé a le plus d'heures ce mois-ci ? ». Il consulte la base au moyen de l'outil **`recherche_bd`** (lecture seule) et formule une réponse en langage clair.
+- **Créer ou modifier des enregistrements** sur demande : « Crée une note de projet… », « Marque ce bon de travail comme terminé… ». Il utilise l'outil **`executer_action`** (écriture directe). *C'est le seul assistant de l'ERP avec un accès en écriture à votre base — lisez attentivement le point d'attention du §1.3 et le §3.2.*
+- **Donner un avis d'expert construction** : conseils techniques, rappels de normes, pistes de résolution de problème de chantier. L'assistant adapte automatiquement son ton et son expertise selon le sujet détecté dans votre question (électricité, plomberie, structure, toiture, isolation, sécurité, aspects juridiques, comptabilité…), sans que vous ayez à choisir quoi que ce soit (voir §4.3).
+- **Analyser un document** que vous lui fournissez : contrat, devis reçu, fiche technique, chiffrier. Un seul fichier à la fois (voir §2.6).
+- **Analyser des plans** (jusqu'à dix fichiers image ou PDF) par lecture d'image : identification des éléments, estimation des surfaces, corps de métier nécessaires (voir §2.7).
+- **Importer une liste de clients** depuis un fichier CSV ou Excel exporté d'un autre logiciel, avec correspondance des colonnes proposée par l'IA (voir §2.8 et §3.6).
+- **Suivre votre consommation** : solde de crédits, coûts des 30 derniers jours, usage par fonctionnalité (voir §2.9).
 
-Source : `ai.py:36`, `accounting.py`, `immobilier.py`
+L'assistant conserve **l'historique de vos conversations** : vous pouvez les rouvrir, les poursuivre ou les supprimer.
 
-| Module                              | Modele                          | Contexte                     |
-|-------------------------------------|---------------------------------|------------------------------|
-| **Chat principal AssistantIAPage**  | `claude-sonnet-4-6` (defaut)   | Chat general + tools         |
-| **Scan facture** (Module 7)         | `claude-sonnet-4-6` (vision)   | OCR + extraction structuree  |
-| **Notes IA Dossiers** (Module 8)    | `claude-sonnet-4-6`             | Enrichissement / photo / resume |
-| **Immobilier — Analyser projet**    | `claude-opus-4-20250514`        | Analyse complexe (cout sup.) |
-| **Immobilier — Chat / Rapport / Optimiser** | `claude-sonnet-4-20250514` | Generation textes longs      |
-| **Public chat Sylvain** (pre-login) | `claude-sonnet-4-6`, max 2000 tokens, temp 0.7 | Marketing pre-vente |
+### 1.2 Comment y accéder
 
-`AI_MAX_TOKENS = 31500` (defaut) sur le chat principal.
+- **Depuis la barre supérieure de l'ERP** (celle qui reste affichée en haut, quel que soit le module ouvert) : cliquez sur le bouton **« Assistant IA »**, reconnaissable à son icône d'étincelle violette (`Sparkles`). Ce bouton est défini dans `TopBar.tsx` (lignes 312-320) et vous amène à la page `/assistant-ia`.
+- **Par l'adresse directe** : `/assistant-ia`.
 
-### 1.3 6 profils d expert (chat principal)
+> **Point important — ce module n'est PAS dans la barre latérale de gauche.** Contrairement à la plupart des modules (Ventes, Comptabilité, Magasin…), l'Assistant IA ne figure pas dans le menu latéral. On l'ouvre uniquement par le bouton « étincelle » de la barre supérieure (ou par l'adresse). Si vous le cherchez dans la barre de gauche, vous ne l'y trouverez pas : c'est normal.
 
-Source : `GET /ai/profiles`
+La page est **protégée** : il faut être connecté à l'ERP.
 
-| Profil                | Specialite                                                              |
-|-----------------------|-------------------------------------------------------------------------|
-| `general`             | Assistant generaliste (defaut)                                          |
-| `expert_construction` | Code National du Batiment (CNB), Code de Construction du Quebec (CCE), normes ASTM/CSA, RBQ |
-| `estimateur`          | Estimation des couts, soumissions, comparatifs fournisseurs            |
-| `comptable`           | TPS/TVQ, plan comptable Quebec, paie DAS, retenues, periodes comptables |
-| `juridique`           | Code civil Quebec, contrats, retenues garantie, vices caches            |
-| `securite`            | CNESST, EPI, prevention chantier, formation                             |
+### 1.3 Rôles et permissions
 
-Le profil influe sur le **system prompt** envoye a Claude pour orienter l expertise.
+- **Ouvrir la page et dialoguer** : accessible à **tout utilisateur connecté** de l'entreprise. Il n'y a **aucun contrôle de rôle** (ni administrateur, ni comptable, ni super-administrateur) sur les points d'accès de ce module ; tous s'appuient uniquement sur l'authentification.
+- **Point d'attention (sécurité).** Puisqu'il n'y a pas de garde de rôle, **n'importe quel employé connecté** peut demander à l'assistant de **modifier ou supprimer des données** (outil `executer_action`), sans passer par les écrans habituels ni par une validation d'administrateur. Tenez-en compte dans l'attribution des comptes. Les seuls garde-fous techniques sont : le refus des mots-clés destructeurs, l'obligation d'une clause `WHERE` sur toute modification ou suppression (impossible de « tout effacer » d'un coup), un délai maximal de 10 secondes par opération, et un journal d'audit côté serveur (voir §4.3).
+- **Crédits.** Le vrai « verrou » du module est **financier**, pas basé sur les rôles : si le solde de crédits prépayés de l'entreprise est épuisé, l'assistant cesse de répondre jusqu'à la recharge (voir §1.6 et §4.5). Le super-administrateur de la plateforme et quelques comptes internes sont exemptés de facturation (usage illimité).
+- **Mode consultation (lecture seule).** Lorsque l'abonnement de l'entreprise est suspendu, l'ERP passe en mode consultation et bloque les écritures au niveau global. La lecture reste possible.
 
-### 1.4 Credits IA prepayes
+### 1.4 Les surfaces de la page
 
-Source : `stripe_routes.py`, table `ai_prepaid_credits`
+La page se présente en **deux colonnes** : à gauche, la **zone de dialogue** (la plus large) ; à droite, une **barre latérale de statistiques** qui s'affiche à la demande. S'y ajoutent des panneaux repliables et une fenêtre modale :
 
-Le tenant prepaye un solde en **USD** (charge en CAD via Stripe). Chaque appel IA est facture selon les tokens consommes :
+| Surface | Où | Rôle |
+|---|---|---|
+| **Zone de dialogue** | Colonne de gauche | Fil de la conversation, saisie des messages |
+| **Panneau Conversations** | Se déplie sous l'en-tête | Liste des conversations enregistrées (ouvrir, nouvelle, supprimer) |
+| **Panneau « Analyser un document »** | Se déplie au-dessus de la saisie | Téléverser un fichier + instructions facultatives |
+| **Panneau « Analyser un plan »** | Se déplie au-dessus de la saisie | Téléverser jusqu'à 10 plans |
+| **Modale « Importer des clients »** | Fenêtre superposée | Assistant d'import CSV / Excel en trois étapes |
+| **Barre latérale « Stats »** | Colonne de droite (sur demande) | Crédits, coûts quotidiens, usage sur 30 jours |
 
-**Formule cout Sonnet** :
-```
-cost_usd = (input_tokens * 0.003 + output_tokens * 0.015) / 1000 * 1.30
-```
-(input $0.003 / 1K tokens, output $0.015 / 1K tokens, **markup 30%** pour conversion CAD/USD)
+### 1.5 Ce que le module fait — et ne fait PAS
 
-**Formule cout Opus** (analyser-projet immobilier) :
-```
-cost_usd = (input_tokens * 0.015 + output_tokens * 0.075) / 1000 * 1.30
-```
+Le module **fait** : dialoguer en langage naturel, consulter vos données (lecture), écrire dans votre base (création / modification / suppression encadrées), donner un avis d'expert construction, analyser un document, analyser des plans par lecture d'image, importer des clients, conserver l'historique des conversations, suivre la consommation et le coût.
 
-**Auto-recharge** : si solde < `MIN_BALANCE_THRESHOLD = 0.10 USD`, Stripe charge automatiquement `PREPAID_RECHARGE_AMOUNT = 10.00 USD` (CAD equivalent) sur la carte du tenant.
+Le module **ne fait PAS** :
 
-**Entreprises exemptees** : `AI_GUARD_EXEMPT_IDS = {1, 105, 172}` (`ai.py:36`) — ce sont des **`entreprise_id`** (table `entreprises`), pas des `tenant_id`. Utilisation illimitee sans deduction (comptes admin / demo / interne).
+- **Il ne produit pas d'estimation de coût de projet.** Un encart d'avertissement le rappelle à l'écran : « Pour une **estimation**, allez plutôt dans le module **Soumissions → Estimation IA**. L'Assistant IA n'est pas conçu pour produire des estimations de coût. » L'Estimation IA utilise un modèle plus puissant, des profils experts spécialisés et un calcul de prix déterministe — ce que l'Assistant IA n'a pas.
+- **Il n'offre pas de sélecteur de profil expert.** L'assistant tourne toujours sur un profil unique (voir §1.7). Vous ne choisissez pas « Électricien » ou « Plombier » dans cet écran.
+- **Il n'affiche pas la réponse au fil de la frappe** (pas d'effet « machine à écrire ») : la réponse apparaît d'un bloc, une fois complète. Il n'y a **pas de bouton « Arrêter »** en cours de génération.
+- **Il ne permet pas de renommer une conversation** (seulement créer, ouvrir, supprimer).
+- **Il n'exporte pas** les conversations ni les analyses (pas de PDF, pas d'impression dédiée). Solution de contournement : sélectionner-copier le texte, ou l'impression du navigateur.
+- **Il ne cherche pas sur Internet** et n'appelle pas de services externes : il se limite à vos données et à ses connaissances générales.
 
-### 1.5 Acces
+### 1.6 Le moteur IA et la facturation à l'usage (en bref)
 
-- Sidebar -> **Assistant IA** (icone Sparkles) -> URL `/assistant-ia`
-- Public chat marketing (sans auth) : `/sylvain-chat` ou widget integre sur la landing page
+- **Modèle utilisé** : `claude-sonnet-4-6` (le « Sonnet » d'Anthropic). C'est un modèle rapide et économique — **pas** le modèle « Opus », lequel est réservé à l'Estimation IA. Réponse limitée à 32 000 jetons (`AI_MAX_TOKENS`, `ai.py:45`).
+- **Facturation.** Chaque échange consomme des **crédits prépayés** de l'entreprise, calculés d'après le nombre de jetons lus et produits, majorés de 30 % (voir la formule au §4.4). Le solde s'affiche en haut de la page.
+- **Recharge automatique.** Quand le solde passe sous 0,10 $, l'ERP tente une recharge automatique par Stripe (montant par défaut 10,00 $). Si la carte est refusée ou le solde épuisé sans recharge, l'assistant renvoie une erreur « Crédits épuisés » (code 402) et affiche une bannière avec un bouton **Recharger** (voir §3.9).
+- **Comptes exemptés** : le super-administrateur et quelques entreprises internes (identifiants 1, 105 et 172) ont un usage **illimité**, sans débit.
 
-### 1.6 Permissions
+### 1.7 Nuance importante : « profils experts », deux systèmes à ne pas confondre
 
-- Chat principal : tous les utilisateurs authentifies du tenant (sous reserve credits disponibles).
-- Tools `executer_action` : tout utilisateur peut declencher des INSERT/UPDATE/DELETE via l IA (audit log integral).
-- Public chat Sylvain : libre acces avec rate limits (cf. section 4).
+Le nom du module parle de « profils experts ». Dans l'ERP, ce terme recouvre **deux mécanismes distincts** — et **un seul** concerne cette page :
 
----
+1. **Six profils internes** (`AI_PROFILES`, `ai.py:737-790`) : `general` (« Assistant Constructo AI »), `expert_construction`, `estimateur`, `comptable`, `juridique`, `securite`. **L'Assistant IA utilise en permanence le profil `general`.** Le code fixe ce choix (`AssistantIAPage.tsx:38` : `const selectedProfile = 'general';`) et **aucun sélecteur n'est proposé** à l'écran. Vous ne changez donc jamais de profil ici. Le point d'accès `GET /ai/profiles` renverrait bien les six profils, mais la page ne l'appelle pas.
+2. **Environ 66 profils experts sur fichier** (Architecte, Électricien, Plombier, Toiture, RBQ et CCQ, Entrepreneur général QC / CA / US, etc.) plus des **profils personnalisés** stockés par entreprise. Ils sont gérés par `ai_profiles.py` et servis par `GET /ai-profiles/experts`. **Ces profils n'alimentent PAS l'Assistant IA** : ils sont consommés par le module **Estimation IA** (Soumissions) et par le **Métré PDF**. Si vous cherchez à choisir un expert précis (par exemple pour une soumission), c'est dans ces modules-là, pas ici.
 
-## 2. Interface Assistant IA
-
-### 2.1 Page `/assistant-ia` (chat principal)
-
-**Layout** : interface chat plein ecran avec panneau lateral.
-
-#### 2.1.1 Panneau lateral (gauche)
-
-- **Profil hardcode a `'general'`** dans le frontend (`AssistantIAPage.tsx:34` -> `const selectedProfile = 'general';`). Les 6 profils existent cote backend (`ai.py` -> `AI_PROFILES`) mais ne sont **pas selectionnables depuis l UI** dans cette version. Pour activer un profil different, il faudrait modifier le code source ou implementer un dropdown.
-- **Conversations sauvegardees** (liste — click pour charger)
-- **Bouton Nouvelle conversation**
-- **Carte Credits** :
-  - Solde balance USD (ex. `$3.42 USD`)
-  - Indicateur auto-recharge active
-  - Bouton **Recharger** : lien externe (`<a href="https://billing.stripe.com/p/login/constructoai" target="_blank">`) vers le Customer Portal Stripe (pas de modale interne).
-- **Stats du mois** : tokens consommes + cout (USD)
-
-#### 2.1.2 Zone chat principale
-
-- **Historique messages** : alternance utilisateur / assistant
-- Pour chaque message assistant : badge `tokens` + `cost USD` + `temps ms` + `profil utilise`
-- **Reponse JSON complete** : la reponse Claude apparait d un coup une fois generee (pas de streaming SSE cote client, pas de rendering progressif). L UI fait `setMessages([..., {response}])` apres reception.
-- **Markdown supporte** : tableaux, listes, code blocks, gras/italique
-- **Champ input** : multi-lignes, `Ctrl+Enter` pour envoyer
-
-#### 2.1.3 Boutons d action
-
-- **+ Joindre document** (icone Paperclip) -> upload image/PDF -> `POST /ai/analyze-document`
-- **+ Joindre plan** (icone Map) -> upload plan/blueprint -> `POST /ai/analyze-plan`
-- **Effacer historique** (icone Trash2) -> reinitialise le chat (la conversation reste sauvegardee)
-- **Telecharger conversation** (export markdown) — a verifier en prod
-
-### 2.2 Vue conversations (sidebar)
-
-- Liste paginee des conversations sauvegardees (`GET /ai/conversations`)
-- Pour chaque : titre auto (premieres lignes du message utilisateur), date, profil, badge tokens cumules
-- Click -> charge l historique complet dans la zone chat
-- Icone poubelle -> `DELETE /ai/conversations/{conv_id}`
-
-### 2.3 Carte Credits & Stats
-
-#### 2.3.1 Solde
-
-- Affichage : balance USD courant + monthly_limit_usd (souvent `999999.99` = illimite)
-- Indicateur auto-recharge ON/OFF + montant + carte Stripe lieee
-- Badge `EXEMPT` si tenant dans la liste exemptee (sans facturation)
-
-#### 2.3.2 Stats consommation
-
-3 endpoints :
-- **`GET /ai/usage`** : agregation par feature (defaut 30 jours)
-- **`GET /ai/usage/daily`** : breakdown journalier (30 derniers jours) — graphique barres
-- **`GET /ai/usage/monthly`** : breakdown mensuel (par feature)
-
-Stats affichees :
-- Total tokens consommes / Cout total USD
-- Top 5 features par cout (chat, invoice_scan, immobilier_analyser_projet, dossiers_notes_ai_enrich, etc.)
-- Graphique evolution journaliere
-
-### 2.4 Public chat Sylvain (pre-login)
-
-URL : `/sylvain-chat` (page publique sans authentification).
-
-Widget chat avec :
-- Avatar Sylvain (vendeur virtuel)
-- **Reponses JSON completes** (pas de streaming SSE — `public_chat.py:328` retourne `ChatResponse` Pydantic complete)
-- Limites strictes (cf. section 4) :
-  - **20 echanges par session** (session_id genere cote client)
-  - **50 echanges par IP / 24h** (anti-cycling session_id)
-  - **10 req/min** (middleware global)
-
-Modele : `claude-sonnet-4-6`, max 2000 tokens, temperature 0.7.
-System prompt : 12.5k tokens (cache prompt 5 min Anthropic).
-
-A 20/session : message « Limite session atteinte ». A 50/IP/24h : message bloquant.
-
-> **Tracking** dans `ai_usage_tracking` avec `feature='sylvain_chat_login'` mais **PAS de deduction** des credits du tenant (gratuit pre-login).
+En résumé : dans cet écran, il y a **un seul cerveau** (`general`), qui **adapte son expertise automatiquement** au sujet de votre question (voir §4.3), sans menu de sélection.
 
 ---
 
-## 3. Workflows pas-a-pas
+## 2. Interface
 
-### 3.1 Demarrer une nouvelle conversation
+### 2.1 En-tête de la page
 
-1. Page Assistant IA -> bouton **+ Nouvelle conversation**.
-2. Le profil `general` est utilise par defaut (hardcode dans le frontend, voir section 2.1.1 — pas de dropdown UI pour changer).
-3. Saisir une question dans le champ -> Enter ou Ctrl+Enter.
-4. `POST /ai/chat` avec `{message, profile: 'general', conversation_id (null si nouvelle)}`.
-5. Backend :
-   - Verifie credits (`_check_credits`) — si solde <= 0 ET tenant non exempt -> tente auto-recharge Stripe ou retourne HTTP 402.
-   - Construit le system prompt selon `profile`.
-   - Injecte la **DATE DU JOUR** (`ai.py:45-50`) pour eviter les erreurs temporelles.
-   - Appelle Claude Sonnet 4.6 via `with _anthropic_client.messages.stream(...)` puis recupere la reponse finale via `stream.get_final_message()` (`ai.py:295-303`). Le streaming est **interne au serveur uniquement** — la reponse n est pas propagee au client en SSE.
-   - A la fin : insert dans `ai_conversations` + `ai_usage_tracking`, deduit cost_usd du `ai_prepaid_credits`.
-6. La reponse complete est retournee en JSON via `ChatResponse` Pydantic et apparait d un coup dans le chat (pas de rendering mot par mot).
+En haut de la zone de dialogue :
 
-### 3.2 Continuer une conversation
+- Une icône d'étincelle violette (`Sparkles`), le titre **« Assistant IA »** et le sous-titre **« Expert construction polyvalent — Connecté à vos données »**.
+- Le bouton **« Conversations »** (icône `MessageSquare`) : ouvre ou ferme le panneau des conversations enregistrées. Un compteur `(n)` s'affiche à côté du libellé quand des conversations existent.
+- L'**indicateur de solde** (icône `CreditCard`) : affiche le montant restant sous la forme `$X.XX`, ou **« Illimité »** si votre entreprise est exemptée. La couleur reflète l'état du solde : **vert** au-dessus de 5 $, **jaune** entre 0 $ et 5 $, **rouge** à 0 $ ou moins.
+- Le bouton **« Stats »** (icône `BarChart3`) : affiche ou masque la barre latérale de statistiques (voir §2.9).
 
-1. Cliquer sur une conversation dans la sidebar.
-2. `GET /ai/conversations/{conv_id}` -> charge l historique complet.
-3. Continuer a saisir des messages.
-4. Backend envoie les **6 derniers messages** comme contexte a Claude (limite pour controle tokens).
+### 2.2 Panneau « Conversations »
 
-### 3.3 Utiliser un outil (function calling)
+Ce panneau se déplie quand vous cliquez sur **« Conversations »**.
 
-L IA peut decider d appeler 2 tools selon la question :
+- En tête : le titre **« Conversations »** et un bouton **« Nouvelle »** (icône `Plus`) qui vide l'écran pour démarrer un fil vierge.
+- **Liste des conversations** (défilement vertical) : chaque ligne affiche une icône, le **nom** de la conversation et un compteur **« {n} messages »**. La conversation active est surlignée en bleu.
+  - **Un clic sur une ligne** charge la conversation complète dans la zone de dialogue.
+  - **Le bouton corbeille** (icône `Trash2`, infobulle « Supprimer ») supprime définitivement la conversation.
+- **État vide** : « Aucune conversation ».
 
-#### 3.3.1 `recherche_bd` (lecture)
+> **Rappel des limites.** On peut **créer**, **ouvrir** et **supprimer** une conversation, mais **pas la renommer** : le nom est attribué automatiquement. La liste affiche les 30 conversations les plus récentes de l'utilisateur.
 
-Cas d usage : « Combien de projets en cours ? », « Liste les factures impayees > 1000$ ».
+### 2.3 Bannière « Crédits IA épuisés »
 
-1. Claude detecte le besoin -> emet un `tool_use` avec une requete SQL SELECT.
-2. Backend valide :
-   - Bloque les keywords destructeurs (`DROP, TRUNCATE, ALTER, CREATE, GRANT, REVOKE, LOCK, VACUUM, COPY`).
-   - Strip les commentaires SQL.
-   - Bloque les `;` (multi-statements).
-   - Limite a 50 lignes max retournees.
-3. Execute sur le tenant connecte (`db.set_tenant`).
-4. Renvoie les resultats a Claude (`tool_result`).
-5. Claude formule une reponse en langage naturel.
-6. Audit log : tous les SELECT IA sont logges (`ai_query_audit` ou similaire).
+Quand le solde est à 0 $ ou moins (et que l'entreprise n'est pas exemptée), une bannière rouge apparaît en haut de la zone de dialogue :
 
-#### 3.3.2 `executer_action` (ecriture)
+- Icône `AlertTriangle`, titre **« Crédits IA épuisés »** et message **« Rechargez votre solde pour continuer à utiliser l'assistant IA. »**
+- Bouton **« Recharger »** (icône `ExternalLink`) : ouvre, dans un nouvel onglet, le portail de facturation Stripe (`https://billing.stripe.com/p/login/constructoai`). Vous y gérez votre carte et votre solde (voir §3.9).
 
-Cas d usage : « Cree une facture de 500$ pour Acme Inc. », « Marque le BT-00012 comme termine ».
+Tant que les crédits sont épuisés, la saisie de message est désactivée.
 
-1. Claude emet un `tool_use` avec INSERT/UPDATE/DELETE.
-2. Backend valide (memes filtres) + **timeout 10 secondes** par requete.
-3. **Description obligatoire** : Claude doit fournir une description de l action (audit trail).
-4. Execute sur le tenant.
-5. Renvoie le resultat a Claude.
+### 2.4 Zone de dialogue
 
-> **Aucun garde-fou « confirmer avant action »** : si Claude decide de supprimer, ca supprime. Le user doit etre conscient que l IA a un acces ecriture complet sur le tenant.
+**État vide (aucun message).** Au centre : une icône d'étincelle, le titre **« Posez votre question »** et un sous-titre d'invitation. Juste en dessous, un **encart d'avertissement ambré** :
 
-### 3.4 Analyser un document (image / PDF)
+> Pour une **estimation**, allez plutôt dans le module **Soumissions → Estimation IA**. L'Assistant IA n'est pas conçu pour produire des estimations de coût.
 
-1. Bouton **Joindre document** -> uploader un fichier (max 20 MB).
-2. Optionnellement saisir un prompt specifique (« Extrais les montants », « Resume le contrat »).
-3. `POST /ai/analyze-document` (multipart).
-4. Backend :
-   - Encode en base64.
-   - Appelle Claude Sonnet 4.6 vision avec system prompt « Analyste de documents construction Quebec ».
-   - Reponse en markdown structure.
-5. Affiche dans le chat avec badge `type: document`.
+Cet encart contient aussi deux boutons de démarrage rapide : **« Analyser un document »** et **« Analyser un plan »**, qui ouvrent les panneaux correspondants (voir §2.6 et §2.7).
 
-### 3.5 Analyser un plan de construction
+**Bulles de message.**
 
-1. Bouton **Joindre plan**.
-2. Upload blueprint / plan PDF / image.
-3. `POST /ai/analyze-plan`.
-4. Backend appelle Claude vision avec prompt specifique « Expert plans construction » :
-   - Identifie les elements (murs, fenetres, portes, structure)
-   - Estime les surfaces / volumes
-   - Note les conformites apparentes
-   - Suggere les corps de metier necessaires
-5. Reponse markdown structuree.
+- Votre message apparaît dans une **bulle bleue alignée à droite** (avatar « personne »).
+- La réponse de l'assistant apparaît dans une **bulle claire à liseré bleu**, avec l'avatar « casque de chantier » (`HardHat`). Le texte est mis en forme (Markdown) : titres, listes, **gras**, et surtout des **tableaux** stylés.
+- Sous chaque réponse de l'assistant, un pied de bulle affiche des indicateurs : un **badge de profil** (« Assistant Constructo AI », ou « Analyse Document », ou « Analyse Plan » selon le type), un **badge de type** (Document en bleu, Plan en vert), le **nombre de jetons**, le **coût** en dollars (affiché à quatre décimales, en orange) et la **durée** de la réponse en secondes.
 
-### 3.6 Voir les statistiques de consommation
+**Pendant l'attente d'une réponse**, un indicateur animé (avatar d'étincelle + roue de chargement) remplace temporairement la future bulle. La réponse s'affiche **d'un seul bloc** une fois prête (pas d'affichage progressif).
 
-1. Page Assistant IA -> panneau lateral -> section **Stats**.
-2. 3 vues :
-   - **Daily** (`GET /ai/usage/daily`) : barres journalieres 30 derniers jours
-   - **Monthly** (`GET /ai/usage/monthly`) : breakdown par feature (chat, invoice_scan, immobilier_*, etc.)
-   - **Top features** : top 5 features les plus couteuses sur le mois
+### 2.5 Barre de saisie
 
-### 3.7 Verifier le solde de credits
+En bas de la zone de dialogue :
 
-1. Sidebar -> carte **Credits**.
-2. `GET /ai/credits` retourne :
-   - `balance_usd` : solde courant
-   - `monthly_limit_usd` : plafond mensuel
-   - `auto_recharge` : ON/OFF
-   - `is_exempt` : true si tenant dans liste exemptee
+- **Trois boutons-icônes** à gauche du champ :
+  - `FileUp` — **« Analyser un document »** : ouvre le panneau d'analyse de document (§2.6).
+  - `Image` — **« Analyser un plan »** : ouvre le panneau d'analyse de plan (§2.7).
+  - `Database` — **« Importer des clients (CSV/Excel) »** : ouvre la modale d'import (§2.8).
+- **Le champ de saisie**, avec le texte d'invite **« Posez votre question à l'expert IA… »** (ou « Crédits épuisés » si le solde est vide). **La touche Entrée envoie le message** (sans `Maj`). Le champ est désactivé pendant qu'une réponse se génère ou si les crédits sont épuisés.
+- **Le bouton « Envoyer »** (icône `Send`) : désactivé si le champ est vide, si une réponse est en cours, ou si les crédits sont épuisés.
 
-### 3.8 Recharger les credits manuellement (Customer Portal Stripe)
+> **À noter.** Il n'y a **pas de bouton « Arrêter »** pour interrompre une réponse en cours, et **pas d'affichage au fil de la frappe**. Une réponse longue peut prendre quelques secondes ; patientez jusqu'à son affichage complet.
 
-1. Sidebar -> bouton **Recharger** : c est un lien externe `<a href="https://billing.stripe.com/p/login/constructoai" target="_blank">` (`AssistantIAPage.tsx:399, 636`) qui ouvre le **Customer Portal Stripe** dans un nouvel onglet.
-2. L utilisateur gere ses credits, methodes de paiement et historique de facturation depuis le portail Stripe (interface hebergee par Stripe, hors ERP).
-3. **Pas de modale interne, pas de POST direct depuis l Assistant IA** (pas d input pour le montant cote ERP).
-4. L endpoint `POST /stripe/credits/recharge` (`stripe_routes.py:298`) **existe** dans le backend (validation bornes 5-500 USD, charge one-time invoice via PaymentMethod stocke) mais n est **pas appele depuis cette UI** — il est reserve a d autres flux (admin / API directe / futur upgrade).
+### 2.6 Panneau « Analyser un document »
 
-### 3.9 Activer / desactiver l auto-recharge
+Ce panneau se déplie au-dessus de la barre de saisie.
 
-1. Sidebar -> carte Credits -> toggle **Auto-recharge**.
-2. `PUT /stripe/credits/auto-recharge` avec `{enabled, amount}` (cf. en prod).
-3. Si activee : a chaque appel chat avec solde < 0.10 USD, Stripe charge automatiquement le `recharge_amount_usd` (defaut $10 CAD).
+- Titre : **« Analyser un document »**.
+- Zone de téléversement : **un seul fichier**, taille maximale **50 Mo**. Formats acceptés : **PDF, Word (.docx), Excel (.xlsx), CSV, TXT, Markdown, JSON, HTML** et **images** (JPG, PNG). Le libellé indique « Document (PDF, DOCX, XLSX, CSV, TXT, Images) ».
+- Champ **« Instructions spécifiques (optionnel) »** : précisez ce que vous voulez (par exemple « Extrais tous les montants et échéances », « Résume ce contrat en dix points »).
+- Bouton **« Analyser le document »** : lance l'analyse. Le résultat s'insère dans le fil sous la forme d'un message assistant précédé de « **Type de document :** … | **Pages :** … ».
 
-### 3.10 Supprimer une conversation
+Sous le capot : les documents texte sont lus et **tronqués à 100 000 caractères** ; les images sont redimensionnées à 1568 pixels avant lecture.
 
-1. Sidebar -> conversation -> icone poubelle.
-2. Confirmation -> `DELETE /ai/conversations/{conv_id}`.
-3. Hard delete : la conversation et tous ses messages disparaissent.
-4. Le tracking ai_usage_tracking n est PAS supprime (audit immutable).
+### 2.7 Panneau « Analyser un plan »
+
+Également au-dessus de la barre de saisie.
+
+- Titre : **« Analyser un plan »**.
+- Zone de téléversement : **jusqu'à 10 fichiers**, taille maximale 50 Mo chacun. Formats : **JPG, PNG, PDF**. Le libellé indique « Plans (JPG, PNG, PDF) — jusqu'à 10 fichiers ».
+- Bouton **« Analyser les plans »** : lance la lecture d'image. Le résultat s'insère dans le fil, précédé de « **Type de plan :** … | **Fichiers analysés :** … ».
+
+Sous le capot : pour un PDF, seules **les cinq premières pages** sont converties en images (à double résolution) et lues. L'assistant identifie les éléments du plan, estime des surfaces et suggère les corps de métier.
+
+### 2.8 Modale « Importer des clients »
+
+Ouverte par le bouton `Database` de la barre de saisie, cette fenêtre déroule un assistant en **trois étapes**.
+
+**Étape 1 — Choix du fichier.**
+- Zone de dépôt : bouton **« Choisir un fichier (.csv ou .xlsx) »**.
+- Aide : « Formats acceptés : CSV, Excel (.xlsx). Maximum 8 Mo / 5000 lignes. »
+- Boutons **« Annuler »** et **« Analyser le fichier »**. L'analyse est **en lecture seule** : elle ne modifie rien, elle prépare l'aperçu.
+
+**Étape 2 — Aperçu et correspondance des colonnes.**
+- Quatre compteurs : **« n à créer »**, **« n à mettre à jour »**, **« n en erreur »**, **« n ligne(s) au total »**.
+- Un tableau de **correspondance** : pour chaque colonne de votre fichier, un **menu déroulant** permet de choisir la colonne-client cible. L'IA propose déjà une correspondance ; vous pouvez la corriger. Cibles possibles : **Nom (obligatoire)**, Type, Secteur d'activité, Courriel, Téléphone, Adresse, Ville, Province, Code postal, Pays, Site web, No TPS, No TVQ, Conditions de paiement, Notes — plus l'option **« — Ignorer — »** pour ne pas importer une colonne.
+- Garde-fou : le bouton **« Confirmer l'import »** reste **désactivé** tant que la colonne **Nom** n'est pas associée. Le message « La colonne « Nom » est obligatoire : associez-la à une colonne du fichier. » vous le rappelle.
+- Boutons **« Retour »** et **« Confirmer l'import »**. La confirmation **écrit réellement** les clients dans votre base.
+
+**Étape 3 — Rapport.**
+- Titre **« Import terminé »**, avec le décompte **« n créé(s) »**, **« n mis à jour »**, **« n erreur(s) »** et le détail des erreurs, ligne par ligne.
+- Bouton **« Fermer »**.
+
+> **Portée de l'import.** L'assistant d'import alimente uniquement la table des **clients / entreprises** (`companies`). La colonne **Nom** est obligatoire ; le fichier est plafonné à **8 Mo** et **5000 lignes**.
+
+### 2.9 Barre latérale « Stats »
+
+Affichée par le bouton **« Stats »** de l'en-tête, elle empile trois cartes.
+
+**Carte « Crédits IA ».**
+- Si l'entreprise est exemptée : mention **« Illimité »** et badge **« Exempt »**.
+- Sinon : le **solde** en dollars US, la ligne **« Utilisé ce mois : $X.XXXX »**, et, si la recharge automatique est active, **« Recharge auto : $X »**. Un bouton **« Recharger les crédits »** (lien vers le portail Stripe) apparaît quand le solde est à zéro ou négatif.
+
+**Carte « Coûts quotidiens (30j) ».**
+- Un petit **histogramme** de 30 barres (une par jour), avec une infobulle par jour (date, coût, nombre de requêtes), une légende « 30j / Aujourd'hui » et le **total sur 30 jours**.
+
+**Carte « Usage (30 jours) ».**
+- Les totaux **Requêtes / Jetons / Coût** sur 30 jours, puis une **ventilation par fonctionnalité** (par exemple `chat_general`, `analyze_document`, `analyze_plan`) avec le nombre de requêtes de chacune.
+
+Ces cartes sont alimentées par les points d'accès `GET /ai/credits`, `GET /ai/usage` et `GET /ai/usage/daily`.
 
 ---
 
-## 4. Reference
+## 3. Workflows pas à pas
 
-### 4.1 Endpoints router AI (`/ai`)
+### 3.1 Poser une question sur vos données
 
-| Methode | URL                            | Role                                              |
-|---------|--------------------------------|---------------------------------------------------|
-| POST    | `/ai/chat`                     | Chat principal (avec profile, tools, streaming)   |
-| GET     | `/ai/conversations`            | Liste conversations sauvegardees                  |
-| GET     | `/ai/conversations/{conv_id}`  | Detail conversation (historique complet)          |
-| DELETE  | `/ai/conversations/{conv_id}`  | Supprimer conversation                            |
-| GET     | `/ai/profiles`                 | Liste 6 profils d expert                          |
-| GET     | `/ai/usage`                    | Stats agregees par feature (30j defaut)           |
-| GET     | `/ai/usage/daily`              | Stats journalieres                                |
-| GET     | `/ai/usage/monthly`            | Stats mensuelles                                  |
-| GET     | `/ai/credits`                  | Solde + monthly_limit + auto_recharge + is_exempt |
-| GET     | `/ai/quota`                    | Verification quota (allowed/balance/monthly_used/monthly_limit/is_exempt) — endpoint actif dans `ai.py:2340` |
-| POST    | `/ai/analyze-document`         | Vision : analyser image/PDF                       |
-| POST    | `/ai/analyze-plan`             | Vision : analyser plan/blueprint                  |
+1. Ouvrez l'Assistant IA (bouton « étincelle » de la barre supérieure).
+2. Écrivez votre question, par exemple : « Liste les projets en cours avec leur date de fin prévue » ou « Quelles sont mes trois factures impayées les plus anciennes ? ».
+3. Appuyez sur **Entrée** (ou cliquez sur **Envoyer**).
+4. L'assistant réfléchit, consulte votre base au besoin (outil `recherche_bd`, lecture seule, 50 lignes maximum par requête), puis répond en langage clair, souvent sous forme de **tableau**.
+5. Le coût de l'échange et le nombre de jetons s'affichent sous la réponse ; le solde en haut de la page est mis à jour.
 
-### 4.2 Endpoints credits Stripe (`/stripe`)
+> **Astuce.** Vous pouvez demander un format : « Présente-moi ça en tableau avec colonnes Client, Montant, Jours de retard. » L'assistant sait aussi enchaîner : la conversation garde le contexte des échanges précédents.
 
-| Methode | URL                              | Role                                           |
-|---------|----------------------------------|------------------------------------------------|
-| GET     | `/stripe/credits`                | Solde + usage du mois + is_exempt              |
-| POST    | `/stripe/credits/recharge`       | Recharge manuelle ($5-$500)                    |
-| POST    | `/stripe/checkout`               | Creer checkout abonnement                      |
-| POST    | `/stripe/cancel`                 | Annuler abonnement                             |
+### 3.2 Demander à l'IA de créer ou de modifier une donnée
 
-### 4.3 Endpoint public (`/public`)
+L'assistant peut **écrire** dans votre base (outil `executer_action`). Exemples : « Ajoute une note au projet « Rénovation Rive-Sud » : inspection prévue vendredi », « Passe le bon de travail BT-00042 au statut Terminé ».
 
-| Methode | URL                              | Role                                           |
-|---------|----------------------------------|------------------------------------------------|
-| POST    | `/public/sylvain-chat`           | Chat marketing pre-login (sans auth)           |
+1. Formulez clairement la demande, en identifiant sans ambiguïté l'enregistrement visé (numéro, nom exact).
+2. Envoyez le message.
+3. L'assistant exécute l'opération **immédiatement** et confirme le résultat (par exemple « Enregistrement créé, identifiant 128 » ou « 1 ligne modifiée »).
 
-### 4.4 6 profils d expert
+> **Point d'attention majeur — l'écriture est immédiate et sans étape de confirmation.** Dans ce module, il **n'existe pas de mécanisme « je te propose, tu confirmes »** côté serveur : si l'assistant décide d'agir, l'action est appliquée et validée sur-le-champ. Les garde-fous techniques sont : les mots-clés destructeurs (DROP, TRUNCATE, ALTER…) sont bloqués ; **toute modification ou suppression doit comporter une condition `WHERE`** (impossible d'effacer une table entière d'un coup) ; chaque action est journalisée. Mais **il n'y a pas d'annulation automatique**. Soyez précis, et évitez les demandes vagues du type « supprime les vieux dossiers » : préférez « supprime le dossier numéro 57 ». En cas de doute, demandez d'abord à l'assistant de **vous montrer** les enregistrements concernés (lecture) avant de lui demander d'agir.
 
-| Profil ID             | Domaine                                                                 |
-|-----------------------|-------------------------------------------------------------------------|
-| `general`             | Generaliste                                                             |
-| `expert_construction` | CNB, CCE, normes ASTM/CSA, RBQ                                         |
-| `estimateur`          | Estimation, soumissions                                                 |
-| `comptable`           | TPS/TVQ, plan comptable, paie DAS, retenues garantie                    |
-| `juridique`           | Code civil Quebec, contrats, vices caches                              |
-| `securite`            | CNESST, EPI, prevention                                                 |
+### 3.3 Reprendre ou gérer une conversation
 
-### 4.5 Modeles et couts
+1. Cliquez sur **« Conversations »** pour dérouler la liste.
+2. **Pour reprendre** : cliquez sur une conversation ; son fil complet se recharge, et vous pouvez poursuivre le dialogue.
+3. **Pour repartir à neuf** : cliquez sur **« Nouvelle »** ; l'écran se vide (la conversation précédente reste enregistrée).
+4. **Pour supprimer** : cliquez sur la **corbeille** de la ligne concernée.
 
-| Modele                   | Input ($/1M tokens) | Output ($/1M tokens) | Markup interne |
-|--------------------------|---------------------|----------------------|----------------|
-| `claude-sonnet-4-6`      | $3                  | $15                  | x1.30          |
-| `claude-opus-4-20250514` | $15                 | $75                  | x1.30          |
+Les conversations sont **enregistrées automatiquement** après chaque échange ; vous n'avez rien à sauvegarder manuellement.
 
-> **Cost USD reel facture** = formule + 30% (couvre conversion CAD/USD + marge plateforme).
+### 3.4 Analyser un document
 
-### 4.6 Tools (function calling)
+1. Cliquez sur le bouton **« Analyser un document »** (icône `FileUp`) ou sur le bouton du même nom dans l'encart de l'état vide.
+2. Téléversez **un** fichier (PDF, Word, Excel, CSV, TXT, image…), 50 Mo au maximum.
+3. Facultatif : précisez vos **instructions** (« Vérifie les clauses de pénalité », « Sors-moi la liste des matériaux et quantités »).
+4. Cliquez sur **« Analyser le document »**.
+5. La réponse s'ajoute au fil, précédée du type de document et du nombre de pages.
 
-#### 4.6.1 `recherche_bd`
+### 3.5 Analyser des plans
 
-- **Type** : SELECT-only (lecture)
-- **Acces** : 40+ tables du tenant (CORE, ACCOUNTING, CRM, LOGISTICS, IMMOBILIER, LOCATION, MAINTENANCE, etc.)
-- **Limite** : auto-LIMIT 50 lignes
-- **Bloque** : commentaires SQL (`--`, `/* */`), `;`, keywords destructeurs
-- **Audit** : log dans table audit (a verifier en prod)
+1. Cliquez sur **« Analyser un plan »** (icône `Image`).
+2. Téléversez **jusqu'à 10** fichiers (JPG, PNG ou PDF).
+3. Cliquez sur **« Analyser les plans »**.
+4. La réponse (éléments repérés, surfaces estimées, corps de métier suggérés) s'ajoute au fil.
 
-#### 4.6.2 `executer_action`
+> **Bon à savoir.** Pour un PDF, l'assistant lit **les cinq premières pages** seulement. Si votre plan compte davantage de feuilles utiles, découpez-le ou téléversez les pages pertinentes en images.
 
-- **Type** : INSERT / UPDATE / DELETE (ecriture)
-- **Champ obligatoire** : `description` (audit trail)
-- **Timeout** : 10 secondes par requete
-- **Bloque** : memes keywords destructeurs au niveau **schema** (DROP TABLE, ALTER, GRANT)
-- **PAS de confirmation** : Claude execute directement si elle decide d agir
+### 3.6 Importer des clients depuis un fichier CSV ou Excel
 
-### 4.7 Limites Public chat Sylvain
+1. Cliquez sur **« Importer des clients (CSV/Excel) »** (icône `Database`).
+2. **Étape 1** : choisissez votre fichier (8 Mo / 5000 lignes au maximum), puis **« Analyser le fichier »**.
+3. **Étape 2** : vérifiez la **correspondance des colonnes** proposée par l'IA. Assurez-vous que la colonne **Nom** est bien associée (sinon l'import reste bloqué). Ajustez les autres colonnes ou mettez-les à « — Ignorer — ». Contrôlez les compteurs (à créer / à mettre à jour / en erreur).
+4. Cliquez sur **« Confirmer l'import »**.
+5. **Étape 3** : lisez le **rapport** (créés / mis à jour / erreurs). Corrigez votre fichier au besoin et recommencez pour les lignes en erreur, puis **« Fermer »**.
 
-| Limite                         | Valeur            | Endpoint                                |
-|--------------------------------|-------------------|------------------------------------------|
-| Echanges par session           | 20                | session_id (genere cote client)          |
-| Echanges par IP / 24h          | 50                | anti-cycling session                     |
-| Requetes/minute global         | 10                | middleware                               |
-| Max tokens reponse             | 2000              | hard cap                                 |
-| Temperature                    | 0.7               | creativite controlee                     |
-| Cache prompt systeme           | 5 minutes         | Anthropic ephemeral cache (12.5k tokens) |
+### 3.7 Surveiller la consommation et le solde
 
-### 4.8 Tables PostgreSQL (schema `public`)
+1. Cliquez sur **« Stats »** dans l'en-tête.
+2. Consultez la carte **« Crédits IA »** (solde, utilisé ce mois, recharge auto).
+3. Consultez l'**histogramme des coûts quotidiens** (30 jours) et la carte **« Usage »** (requêtes, jetons, coût, ventilation par fonctionnalité).
 
-| Table                  | Role                                                       |
-|------------------------|------------------------------------------------------------|
-| `ai_prepaid_credits`   | Solde credits par tenant (USD), Stripe info, auto-recharge |
-| `ai_usage_tracking`    | Tracking par appel : user, feature, model, tokens, cost    |
-| `ai_conversations`     | Conversations sauvegardees (par tenant + user)             |
+### 3.8 Recharger les crédits
 
-> **Schema public** : ces tables sont **partagees** entre tous les tenants (gestion centralisee facturation IA). Les conversations restent isolees par `(tenant_slug, user_id)`.
+1. Cliquez sur **« Recharger »** (bannière rouge) ou **« Recharger les crédits »** (carte Stats).
+2. Le **portail de facturation Stripe** s'ouvre dans un nouvel onglet (`https://billing.stripe.com/p/login/constructoai`).
+3. Gérez-y votre carte, votre solde et votre historique. La recharge se fait **hors de l'ERP**, dans l'interface hébergée par Stripe.
 
-### 4.9 Constants importantes
+> **À savoir.** Il n'y a pas de champ « montant à recharger » dans l'ERP : la recharge passe par Stripe. Si la **recharge automatique** est active, l'ERP recharge tout seul (montant par défaut 10,00 $) dès que le solde tombe sous 0,10 $.
 
-Source : `ai.py:36-38` (et `stripe_routes.py` pour les seuils Stripe)
+### 3.9 Que faire quand l'assistant affiche « Crédits épuisés »
 
-```python
-AI_GUARD_EXEMPT_IDS = {1, 105, 172}  # entreprise_id exemptes (table entreprises) — PAS tenant_id
-AI_MODEL = "claude-sonnet-4-6"
-AI_MAX_TOKENS = 31500
-MIN_BALANCE_THRESHOLD = 0.10  # USD
-PREPAID_RECHARGE_AMOUNT = 10.00  # USD
+1. Le champ de saisie est verrouillé et une bannière rouge s'affiche.
+2. Cliquez sur **« Recharger »** et complétez l'opération dans Stripe.
+3. Revenez dans l'ERP et rechargez la page (ou attendez la mise à jour du solde). Dès que le solde redevient positif, l'assistant répond de nouveau.
+
+Si la recharge automatique échoue (carte refusée), le message d'erreur Stripe (en français) précise la cause ; mettez à jour votre moyen de paiement dans le portail.
+
+---
+
+## 4. Référence
+
+### 4.1 Points d'accès du moteur IA (`ai.py`, préfixe `/api/erp/v1/ai`)
+
+Tous exigent d'être connecté ; aucun ne comporte de garde de rôle supplémentaire.
+
+| # | Méthode + chemin | Rôle | Notes |
+|---|---|---|---|
+| 1 | `POST /ai/chat` | Dialogue principal (boucle d'outils) | Cœur du module ; utilisé par la page |
+| 2 | `GET /ai/conversations` | Liste des conversations (`subject='assistant_ia'`) | 30 au maximum, par utilisateur |
+| 3 | `GET /ai/conversations/{id}` | Détail d'une conversation (messages) | |
+| 4 | `DELETE /ai/conversations/{id}` | Suppression | 404 si déjà absente |
+| 5 | `GET /ai/profiles` | Liste des 6 profils internes | **Non appelé** par cette page |
+| 6 | `GET /ai/usage` | Statistiques d'usage (période 1-365 j, défaut 30) | Super-admin = totaux globaux |
+| 7 | `GET /ai/credits` | Solde de crédits prépayés | Crée une ligne à 0 si absente |
+| 8 | `GET /ai/quota` | Indicateur de quota (`allowed` **toujours vrai**) | **Non appelé** par cette page |
+| 9 | `GET /ai/usage/daily` | Ventilation quotidienne (1-90 j, défaut 30) | Alimente l'histogramme |
+| 10 | `GET /ai/usage/monthly` | Ventilation mensuelle (1-24 mois, défaut 6) | **Non appelé** par cette page |
+| 11 | `POST /ai/analyze-document` | Analyse d'un document | 1 fichier, 50 Mo |
+| 12 | `POST /ai/analyze-plan` | Analyse de plans (lecture d'image) | 10 fichiers au maximum |
+
+### 4.2 Points d'accès des profils experts (`ai_profiles.py`, préfixe `/api/erp/v1/ai-profiles`)
+
+> **Rappel** : ces huit points d'accès servent **Estimation IA** et **Métré PDF**, **pas** l'Assistant IA. Ils sont listés ici pour lever la confusion sur les « profils experts ». Aucun n'a de garde d'administrateur : tout utilisateur connecté du tenant peut créer / supprimer un profil personnalisé et y téléverser des documents (jusqu'à 20 Mo).
+
+| # | Méthode + chemin | Rôle |
+|---|---|---|
+| 1 | `GET /ai-profiles/` | Liste des profils personnalisés du tenant |
+| 2 | `POST /ai-profiles/` | Créer un profil personnalisé (nom, instructions) |
+| 3 | `GET /ai-profiles/experts` | **≈ 66 profils sur fichier** + profils personnalisés |
+| 4 | `GET /ai-profiles/{id}` | Détail d'un profil personnalisé + documents |
+| 5 | `PUT /ai-profiles/{id}` | Modifier un profil personnalisé |
+| 6 | `DELETE /ai-profiles/{id}` | Supprimer (avec ses documents) |
+| 7 | `POST /ai-profiles/{id}/documents` | Ajouter un document de référence (20 Mo max) |
+| 8 | `DELETE /ai-profiles/{id}/documents/{doc_id}` | Retirer un document |
+
+### 4.3 Les deux outils SQL de l'assistant
+
+Ces outils ne sont fournis au modèle que si l'utilisateur est rattaché à une entreprise. La boucle d'outils tourne au maximum **cinq fois** par question.
+
+**`recherche_bd` — lecture seule.**
+- Uniquement des requêtes `SELECT` / `WITH`, **50 lignes au maximum**, en transaction **lecture seule** avec délai limité à 10 secondes.
+- Mots-clés bloqués : `DROP, TRUNCATE, ALTER, CREATE, GRANT, REVOKE, SET ROLE, SET SESSION, COPY, LOCK, VACUUM, TABLE`. Point-virgule interdit (pas d'enchaînement de requêtes). Fonctions de lecture de fichier / d'accès inter-bases bloquées.
+- **Données sensibles protégées** : la table des utilisateurs et les colonnes sensibles (mot de passe, NAS, jeton, secret, limite de crédit…) sont refusées dans la requête **et** masquées dans le résultat, même sur un `SELECT *`.
+
+**`executer_action` — écriture.**
+- `INSERT` / `UPDATE` / `DELETE` sur **n'importe quelle table de votre entreprise** (pas de liste blanche de tables).
+- Garde-fous : mêmes mots-clés bloqués ; **`UPDATE` et `DELETE` sans `WHERE` refusés** ; délai limité à 10 secondes ; validation et journalisation d'audit.
+- **Pas d'étape de confirmation côté serveur** : l'exécution est immédiate (voir le point d'attention du §3.2).
+
+**Adaptation automatique de l'expertise.** À chaque question, l'assistant **détecte le sujet** (parmi 18 intentions : conseil, finances, équipe, matériel, échéancier, électricité, plomberie, structure, toiture, isolation, sécurité, juridique, comptabilité, création, modification…) et ajuste son cadrage. Ce réglage est **invisible** et **automatique** ; il n'y a rien à sélectionner.
+
+### 4.4 Modèle IA et calcul du coût
+
+| Élément | Valeur |
+|---|---|
+| Modèle | `claude-sonnet-4-6` (Sonnet) |
+| Jetons maximum par réponse | 32 000 |
+| Tarif d'entrée | 0,003 $ / 1000 jetons lus |
+| Tarif de sortie | 0,015 $ / 1000 jetons produits |
+| Majoration appliquée | × 1,30 (30 %) |
+
+**Formule** (identique au chat, à l'analyse de document et à l'analyse de plan) :
+
+```
+coût_$ = ( jetons_entrée × 0,003 + jetons_sortie × 0,015 ) / 1000 × 1,30
 ```
 
-> **Important** : `AI_GUARD_EXEMPT_IDS` contient des `entreprise_id` (cle primaire de la table `entreprises`), **pas** des `tenant_id` ni des `tenant_slug`. C est verifie au niveau de l entreprise rattachee a l utilisateur connecte.
+*Exemples.* Une question simple (≈ 500 jetons lus + 300 produits) coûte environ 0,008 $ (moins d'un cent). Une analyse de plan plus lourde (≈ 4000 + 2000 jetons) coûte environ 0,055 $. Avec un solde de 10 $, cela représente des centaines à plus d'un millier d'échanges selon leur complexité.
 
-### 4.10 Validations & limites
+### 4.5 Crédits, recharge et seuils
 
-| Regle                                    | Effet                                              |
-|------------------------------------------|----------------------------------------------------|
-| Solde IA <= 0 ET tenant non exempt       | HTTP 402 (Payment Required) si auto-recharge OFF ou Stripe echoue |
-| Recharge < $5 ou > $500                  | HTTP 400                                           |
-| `recherche_bd` avec keyword destructeur  | HTTP 400 (SQL bloque)                              |
-| `executer_action` sans description       | Tool call refuse                                   |
-| `executer_action` timeout > 10s          | Annule + log erreur                                |
-| Public chat 21eme echange session        | Message « Limite atteinte »                        |
-| Public chat 51eme echange / IP / 24h     | Message « Limite IP atteinte »                     |
-| Document upload > 20 MB                  | HTTP 413                                           |
+| Paramètre | Valeur | Effet |
+|---|---|---|
+| Facturation active | oui (par défaut) | Sinon, usage interne illimité sur la clé du client |
+| Comptes exemptés | super-admin + entreprises 1, 105, 172 | Usage illimité, aucun débit |
+| Seuil de recharge auto | solde < 0,10 $ | Déclenche une recharge Stripe |
+| Montant de recharge par défaut | 10,00 $ | Configurable côté plateforme |
+| Plafond mensuel de dépense | **aucun** | Décision produit : jamais de blocage dur par l'usage |
+| Solde négatif | autorisé | L'usage réel est toujours consommé et tracé |
+| En cas d'erreur de vérification | blocage (fail-closed) | L'IA cesse de répondre par prudence |
 
----
+> **Point d'attention (facturation).** Les points d'accès `/ai/chat`, `/ai/analyze-document` et `/ai/analyze-plan` **débitent sans clé d'idempotence**. En clair : si le réseau relance la requête (double-soumission, reconnexion), le débit peut se **répéter**. Évitez de cliquer plusieurs fois sur « Envoyer » ou de recharger la page pendant une réponse.
 
-## 5. Integrations & FAQ
+### 4.6 Limites et plafonds
 
-### 5.1 Vue d ensemble — IA dans tout l ERP
+| Fonction | Limite |
+|---|---|
+| Boucle d'outils par question | 5 itérations |
+| `recherche_bd` | 50 lignes par requête, lecture seule, délai 10 s |
+| `executer_action` | `WHERE` obligatoire sur modification/suppression, délai 10 s |
+| Analyse de document | 1 fichier, 50 Mo, texte tronqué à 100 000 caractères |
+| Analyse de plan | 10 fichiers, PDF lu sur ses 5 premières pages, images réduites à 1568 px |
+| Import de clients | table clients uniquement, colonne Nom obligatoire, 8 Mo / 5000 lignes |
+| Historique des conversations | 30 conversations récentes affichées |
+| Débit de vitesse (par IP) | 1500 requêtes / 60 s (limite générale de l'ERP) |
 
-Recap des integrations IA dans les autres modules :
+> **Note technique.** Contrairement aux mini-assistants des autres modules (plafonnés à 20 requêtes/minute), l'Assistant IA **n'a pas de débit de vitesse dédié** : il retombe sur la limite générale de 1500 requêtes par minute et par adresse IP. Le véritable frein reste le solde de crédits.
 
-| Module                | Feature                       | Endpoint                                          | Modele                       |
-|-----------------------|-------------------------------|---------------------------------------------------|------------------------------|
-| **Module 7 Factures** | Scan facture par image/PDF    | `POST /accounting/invoices/ai/scan`               | claude-sonnet-4-6 (vision)   |
-| **Module 8 Dossiers** | Enrichir une note             | `POST /documents/{id}/notes/ai/enrich`            | claude-sonnet-4-6            |
-| **Module 8 Dossiers** | Analyser une photo (defauts)  | `POST /documents/{id}/notes/ai/analyze-photo`     | claude-sonnet-4-6 (vision)   |
-| **Module 8 Dossiers** | Resumer toutes les notes      | `POST /documents/{id}/notes/ai/summary`           | claude-sonnet-4-6            |
-| **Module 19 Immobilier** | Analyser projet (faisabilite) | `POST /immobilier/ia/analyser-projet`           | claude-opus-4-20250514       |
-| **Module 19 Immobilier** | Chat contextuel              | `POST /immobilier/ia/chat`                        | claude-sonnet-4-20250514     |
-| **Module 19 Immobilier** | Generer rapport financement  | `POST /immobilier/ia/rapport-financement`         | claude-sonnet-4-20250514     |
-| **Module 19 Immobilier** | Optimiser financement        | `POST /immobilier/ia/optimiser-financement`       | claude-sonnet-4-20250514     |
-| **Public marketing**  | Chat Sylvain (pre-login)      | `POST /public/sylvain-chat`                       | claude-sonnet-4-6            |
-| **Module 25 IA central**  | Chat principal + tools       | `POST /ai/chat`                                  | claude-sonnet-4-6            |
-| **Module 25 IA central**  | Analyse document             | `POST /ai/analyze-document`                       | claude-sonnet-4-6 (vision)   |
-| **Module 25 IA central**  | Analyse plan                 | `POST /ai/analyze-plan`                           | claude-sonnet-4-6 (vision)   |
+### 4.7 Codes de réponse et messages d'erreur
 
-> **Toutes les features (sauf public Sylvain)** deduisent des credits du tenant. Tracking par feature dans `ai_usage_tracking`.
+| Code | Signification | Ce que vous voyez |
+|---|---|---|
+| 200 | Succès | La réponse s'affiche |
+| 402 | Crédits épuisés / carte refusée | Bannière « Crédits IA épuisés » + bouton Recharger |
+| 403 | Accès au service IA refusé | Message « Accès au service IA refusé. » |
+| 413 | Fichier ou conversation trop volumineux | Message dédié |
+| 429 | Trop de requêtes (débit dépassé) | Message dédié |
+| 503 | Service IA absent ou surchargé | Message dédié ; réessayez plus tard |
+| 500 | Erreur interne | Message générique |
 
-### 5.2 Integration Stripe
+En cas d'erreur, la page affiche un encart d'alerte et une bulle « Erreur : {message} ». Le message précis provient du serveur (par exemple la cause du refus de carte).
 
-- Auto-recharge declenchee depuis `/ai/chat` si solde insuffisant.
-- Charge montant `$10 CAD` (converti USD via taux Stripe) sur la carte stockee.
-- Webhook Stripe `invoice.paid` -> mise a jour `ai_prepaid_credits.balance_usd`.
-- Si Stripe echoue : credits non ajoutes, HTTP 402 retourne au user.
+### 4.8 Tables PostgreSQL
 
-### 5.3 Securite tenant isolation
+| Table | Emplacement | Rôle |
+|---|---|---|
+| `ai_prepaid_credits` | `public` (partagée) | Solde de crédits par entreprise et par mois, info Stripe, recharge auto |
+| `ai_usage_tracking` | `public` (partagée) | Journal de chaque appel : utilisateur, fonctionnalité, modèle, jetons, coût, durée |
+| `ai_credit_applied_invoices` | `public` (partagée) | Anti-doublon des recharges Stripe |
+| `ai_credit_ledger` | `public` (partagée) | Registre d'idempotence des débits (non utilisé par les 3 points d'accès du chat — voir §4.5) |
+| `conversations` | par tenant | Conversations de l'Assistant IA (`subject='assistant_ia'`) |
+| `conversation_messages` | par tenant | Messages des conversations |
+| `ai_profiles` | par tenant | Profils experts **personnalisés** (module Estimation IA / Métré) |
+| `ai_profile_documents` | par tenant | Documents de référence des profils personnalisés |
+| `companies` | par tenant | Clients / entreprises — **cible de l'import** |
 
-- Toutes les requetes IA passent par `db.set_tenant(conn, user.schema)` avant execution -> `db.reset_tenant(conn)` apres.
-- Les tools `recherche_bd` et `executer_action` voient **uniquement** les donnees du tenant connecte (cloisonnement par schema PostgreSQL).
-- Impossible pour Claude de fuiter des donnees inter-tenant via les tools.
+> Les tables `ai_*` du schéma `public` sont **partagées** entre toutes les entreprises pour centraliser la facturation IA ; les conversations, elles, restent **isolées** par entreprise et par utilisateur.
 
-### 5.4 Audit log
+### 4.9 Ce qui n'existe pas dans ce module (récapitulatif des limites)
 
-- Chaque appel IA logge dans `ai_usage_tracking` (input_tokens, output_tokens, cost_usd, duration_ms, success, model, feature, user_id, tenant_slug, created_at).
-- Les requetes `recherche_bd` et `executer_action` sont auditees au niveau SQL (table audit dediee a verifier en prod).
-- Conservation : illimitee (purge manuelle si necessaire).
-
-### 5.5 FAQ
-
-**Q : Quel est le cout typique d une conversation IA ?**
-R : Une question simple (~500 tokens input + 300 tokens output) coute environ `(500*0.003 + 300*0.015) / 1000 * 1.30 = $0.0078 USD`, soit moins d un cent. Une analyse de plan complexe (4000 + 2000 tokens) coute environ `$0.055 USD`. Avec un solde de $10, vous avez ~180 analyses complexes ou ~1280 questions simples.
-
-**Q : L IA peut-elle modifier mes donnees ?**
-R : OUI via le tool `executer_action` (INSERT/UPDATE/DELETE). **Aucun garde-fou de confirmation** : si Claude decide d agir, l action est executee. Toutes les actions sont auditees, mais pas reversibles automatiquement. Soyez prudent avec les demandes destructives type « supprime tous les... ».
-
-**Q : Les tokens cumules apparaissent-ils en temps reel ?**
-R : OUI. Le badge `tokens` + `cost USD` apparait sur chaque message assistant des la fin du streaming.
-
-**Q : Que se passe-t-il si je suis exempt de facturation ?**
-R : Si votre `entreprise_id` est dans `AI_GUARD_EXEMPT_IDS = {1, 105, 172}` (codes en dur dans `ai.py:36`), `is_exempt = true` -> aucune deduction de credits. Les usages sont quand meme tracker pour analytics.
-
-**Q : Comment changer la liste des entreprises exemptees ?**
-R : Modification de code requise (`ai.py:36`, constante `AI_GUARD_EXEMPT_IDS`). Pas configurable via UI.
-
-**Q : La carte Stripe peut-elle etre changee ?**
-R : OUI via le portail Stripe (`/stripe/customer-portal` — a verifier en prod). La methode de paiement utilisee pour l auto-recharge est stockee dans `ai_prepaid_credits.stripe_payment_method`.
-
-**Q : Combien de tokens contient le contexte envoye a chaque chat ?**
-R : Le system prompt (selon profil) varie de 2k a 8k tokens. Les **6 derniers messages** de la conversation sont envoyes en contexte. Chaque message ajoute ~200-500 tokens. Total typique : 5k a 15k tokens input par requete.
-
-**Q : Le chat utilise-t-il du streaming SSE ?**
-R : NON cote client. La reponse est retournee en JSON complet via `ChatResponse` Pydantic. Le backend utilise `with _anthropic_client.messages.stream(...)` en interne pour eviter les timeouts sur les longues reponses Opus, mais recupere la reponse finale via `stream.get_final_message()` avant de la renvoyer en une seule fois. Pour activer du SSE cote client, il faudrait un endpoint `text/event-stream` (FastAPI `StreamingResponse`) et un `EventSource` dans `AssistantIAPage.tsx`.
-
-**Q : Puis-je exporter une conversation en PDF ?**
-R : Pas de bouton dedie dans cette version. Workaround : copier-coller le contenu dans un editeur de texte ou utiliser l impression du navigateur (Ctrl+P).
-
-**Q : Le chat Sylvain pre-login utilise-t-il mon solde IA ?**
-R : NON. Le chat Sylvain est gratuit (cote utilisateur), finance par la plateforme. Tracking dans `ai_usage_tracking` avec `feature='sylvain_chat_login'` mais non deduit.
-
-**Q : Comment proteger mes donnees sensibles vis-a-vis de Claude (Anthropic) ?**
-R : Anthropic offre un engagement de confidentialite : les donnees envoyees a l API Claude **ne sont pas utilisees pour entrainement** sauf opt-in explicite. Les conversations passent par les serveurs Anthropic — verifier la conformite avec vos exigences PIPEDA / Loi 25 si donnees personnelles.
-
-**Q : Pourquoi le chat repond parfois Je n ai pas acces a cette donnee ?**
-R : Soit le tenant est mal configure (`set_tenant` manquant), soit la table interrogee n existe pas dans le schema. Verifier les logs backend.
-
-**Q : L IA peut-elle integrer des sources externes (Internet, APIs tierces) ?**
-R : NON dans cette version. Pas de tool `web_search` ou `http_request`. L IA est limitee aux donnees du tenant (DB) + sa knowledge base d entrainement.
-
-**Q : Combien de conversations sont conservees par utilisateur ?**
-R : Pas de limite hard-codee. Chaque conversation = ~quelques KB en base. Pratiquement illimite. Suppression manuelle via icone poubelle si necessaire.
-
-**Q : Le profil change-t-il automatiquement selon le contexte ?**
-R : NON. Dans cette version, le profil est **hardcode a `'general'`** dans le frontend (`AssistantIAPage.tsx:34` -> `const selectedProfile = 'general';`). Il n y a **pas de UI** pour changer de profil. Les 6 profils existent cote backend (`AI_PROFILES` dans `ai.py`) et sont accessibles via `GET /ai/profiles`, mais l UI n expose pas de selecteur. Pour activer un autre profil, il faudrait modifier le code source ou implementer un dropdown.
+- Pas de **sélecteur de profil expert** (profil `general` fixe).
+- Pas d'**affichage au fil de la frappe** ni de bouton **« Arrêter »**.
+- Pas de **renommage** de conversation.
+- Pas d'**export** ni d'impression dédiée.
+- Pas de **recherche sur Internet** ni d'appel à des services externes.
+- Pas d'**estimation de coût de projet** (renvoi vers Soumissions → Estimation IA).
 
 ---
 
-## 6. Recap one-pager
+## 5. Intégrations et FAQ
 
-- **Modeles** : claude-sonnet-4-6 (chat principal + scan facture + notes IA + chat public + analyse doc/plan), claude-opus-4-20250514 (immobilier analyser-projet).
-- **6 profils experts** definis backend (general / expert_construction / estimateur / comptable / juridique / securite) — **profil hardcode `'general'` dans l UI** (`AssistantIAPage.tsx:34`), pas de dropdown selecteur.
-- **2 tools function calling** : `recherche_bd` (SELECT only, max 50 lignes, blocked keywords) + `executer_action` (INSERT/UPDATE/DELETE avec audit).
-- **PAS de garde-fou confirmation** sur executer_action : Claude execute directement.
-- **Vision** : `/ai/analyze-document` + `/ai/analyze-plan` + scan facture + analyse photo dossier.
-- **Pas de streaming SSE cote client** : reponse JSON complete via `ChatResponse` Pydantic. Stream Anthropic est interne au backend uniquement.
-- **Conversations persistees** : table `ai_conversations`, 6 derniers messages envoyes en contexte.
-- **Credits prepayes USD** : table `ai_prepaid_credits` (schema public), formule cost = (in*0.003 + out*0.015)/1000 * 1.30 (Sonnet).
-- **Auto-recharge Stripe** : declenchee si balance < $0.10 USD, charge $10 CAD (PREPAID_RECHARGE_AMOUNT). Bouton **Recharger** = lien externe vers `https://billing.stripe.com/p/login/constructoai` (Customer Portal Stripe), pas de modale interne.
-- **Entreprises exemptees** : `AI_GUARD_EXEMPT_IDS = {1, 105, 172}` (entreprise_id, pas tenant_id) codes en dur dans `ai.py:36`.
-- **Tracking** : `ai_usage_tracking` (feature, model, tokens, cost, duration, success).
-- **3 vues stats** : daily / monthly / aggregated by feature.
-- **Public chat Sylvain** : sans auth, 20 echanges/session + 50/IP/24h + 10 req/min middleware. Cout pris en charge par la plateforme. Reponse JSON complete (pas SSE).
-- **Tenant isolation** : RLS via PostgreSQL schema. Impossible cross-tenant data leak via tools.
+### 5.1 Liens avec les autres modules
+
+| Module | Lien avec l'Assistant IA |
+|---|---|
+| **Soumissions → Estimation IA** | La **vraie** estimation de coût. Modèle plus puissant, profils experts sélectionnables, calcul de prix déterministe. L'Assistant IA y renvoie explicitement. |
+| **Métré PDF** | Consomme aussi les 66 profils experts sur fichier (via `ai_profiles.py`). |
+| **Ventes / Contacts** | L'assistant d'import alimente la table des clients (`companies`), visible ensuite dans Contacts / Ventes. |
+| **Configuration / Administration** | Le solde de crédits, la recharge automatique et la facturation Stripe se gèrent au niveau de l'entreprise ; le super-administrateur voit les totaux d'usage de toutes les entreprises. |
+| **Autres mini-assistants IA** (Comptabilité, Immobilier, DAO, Messagerie, Métré, Extras…) | Ils réutilisent le **même moteur** (`ai.py`) pour la facturation et l'appel à Claude, mais chacun a son propre périmètre et ses propres garde-fous. Contrairement à l'Assistant IA, plusieurs d'entre eux appliquent un patron « je propose, tu confirmes » avant d'écrire. |
+
+### 5.2 Isolation des données et confidentialité
+
+- Chaque requête de l'assistant s'exécute **dans le schéma de votre entreprise** : les outils `recherche_bd` et `executer_action` ne voient **que vos données**. Une fuite de données d'une entreprise vers une autre par ces outils est bloquée par le cloisonnement PostgreSQL par schéma.
+- Les données envoyées à l'API Claude transitent par les serveurs d'Anthropic. Anthropic s'engage à **ne pas utiliser** les données d'API pour l'entraînement (sauf accord explicite). Si vous manipulez des renseignements personnels, tenez compte de vos obligations (Loi 25 / PIPEDA).
+
+### 5.3 FAQ
+
+**Où se trouve l'Assistant IA ? Je ne le vois pas dans le menu de gauche.**
+Il n'y est pas. On l'ouvre par le bouton **« Assistant IA »** (icône d'étincelle) de la **barre supérieure**, présent partout dans l'ERP, ou par l'adresse `/assistant-ia`.
+
+**Puis-je choisir un profil « Électricien » ou « Plombier » ici ?**
+Non. Cet écran tourne sur un profil unique (`general`) qui **adapte automatiquement** son expertise au sujet de votre question. Les profils experts nommés (Électricien, Plombier, Architecte, RBQ et CCQ…) servent le module **Estimation IA** et le **Métré PDF**, pas l'Assistant IA.
+
+**L'IA peut-elle vraiment modifier ou supprimer mes données ?**
+Oui, par l'outil `executer_action` (création / modification / suppression). **L'action est immédiate, sans étape de confirmation** dans ce module. Les protections sont : mots-clés destructeurs bloqués, condition `WHERE` obligatoire, journal d'audit — mais **pas d'annulation automatique**. Soyez précis dans vos demandes (voir §3.2).
+
+**Combien coûte une conversation ?**
+Quelques fractions de cent pour une question simple ; environ 0,05 $ pour une analyse de plan complexe. Le coût exact s'affiche sous chaque réponse et se cumule dans l'onglet Stats.
+
+**Pourquoi l'assistant me dit-il d'aller dans « Estimation IA » ?**
+Parce que l'Assistant IA **n'est pas conçu pour chiffrer un projet**. L'Estimation IA (module Soumissions) utilise un modèle plus puissant, des profils experts et un calcul de prix contrôlé, adaptés au marché québécois.
+
+**Puis-je exporter une conversation en PDF ?**
+Pas de bouton dédié. Solution de contournement : sélectionner-copier le texte, ou utiliser l'impression du navigateur.
+
+**Le chat s'affiche-t-il mot par mot ?**
+Non. La réponse apparaît d'un bloc, une fois complète. Il n'y a pas non plus de bouton « Arrêter ».
+
+**Que se passe-t-il si mon solde est épuisé ?**
+L'assistant renvoie une erreur « Crédits épuisés » (402) et la saisie se verrouille. Rechargez via le portail Stripe (bouton **Recharger**). Si la recharge automatique est active, l'ERP recharge tout seul dès que le solde passe sous 0,10 $.
+
+**Puis-je téléverser plusieurs documents à analyser ?**
+Pour l'**analyse de document**, un seul fichier à la fois (50 Mo). Pour l'**analyse de plan**, jusqu'à dix fichiers. Un PDF de plan n'est lu que sur ses **cinq premières pages**.
+
+**L'import de clients peut-il modifier des clients existants ?**
+Oui : l'aperçu distingue « à créer » et « à mettre à jour ». La confirmation applique les deux. La colonne **Nom** est obligatoire ; fichier plafonné à 8 Mo / 5000 lignes.
+
+**Un employé sans droits d'administrateur peut-il utiliser l'assistant ?**
+Oui. Tout utilisateur connecté de l'entreprise y a accès, **y compris** la capacité de faire écrire l'IA dans la base. Il n'y a pas de contrôle de rôle sur ce module ; le seul frein est le solde de crédits.
+
+**Mes conversations sont-elles privées à mon compte ?**
+Oui, elles sont rattachées à votre utilisateur et à votre entreprise ; les 30 plus récentes s'affichent dans le panneau Conversations.
+
+**L'IA peut-elle chercher sur Internet ?**
+Non. Elle se limite à vos données et à ses connaissances générales. Pour la recherche web, voyez le module **Web** de l'ERP.
 
 ---
 
-**Documentation generee a partir du code** : `ai.py`, `public_chat.py`, `stripe_routes.py`, `AssistantIAPage.tsx`, integrations dans `accounting.py`, `documents.py`, `immobilier.py`.
+## 6. Récapitulatif
 
-**Manuels lies** :
-- Module 7 (Factures — scan IA) — `07-factures.md`
-- Module 8 (Dossiers — notes IA) — `08-dossiers.md`
-- Module 19 (Immobilier — 4 endpoints IA) — `11-immobilier.md`
-- Module 28 (Administration — gestion tenant + Stripe) — `14-administration.md` (a venir v2.0)
+- **Accès par la barre supérieure** (bouton « étincelle » **Assistant IA**), **pas** par le menu latéral ; adresse `/assistant-ia`.
+- **Un seul profil actif** (`general`), **sans sélecteur** ; l'expertise s'adapte automatiquement au sujet. Les « 66 profils experts » appartiennent à **Estimation IA** et au **Métré PDF**, pas à ce module.
+- **Modèle** `claude-sonnet-4-6` (Sonnet), 32 000 jetons maximum — pas Opus.
+- **Deux outils SQL** : `recherche_bd` (lecture, 50 lignes) et `executer_action` (**écriture immédiate, sans confirmation serveur** ; `WHERE` obligatoire). C'est le **seul** assistant de l'ERP avec accès en écriture — à utiliser avec prudence.
+- **Analyse de document** (1 fichier, 50 Mo) et **analyse de plans** (10 fichiers, PDF sur 5 pages) par lecture d'image.
+- **Assistant d'import de clients** CSV / Excel en trois étapes (aperçu, correspondance, rapport), colonne **Nom obligatoire**, 8 Mo / 5000 lignes.
+- **Conversations** enregistrées automatiquement : créer, ouvrir, supprimer — **pas de renommage, pas d'export**.
+- **Pas d'affichage au fil de la frappe, pas de bouton « Arrêter »**.
+- **Facturation à l'usage** : coût = (entrée × 0,003 + sortie × 0,015) / 1000 × 1,30 ; recharge auto Stripe sous 0,10 $ (défaut 10,00 $) ; pas de plafond mensuel dur ; super-admin et entreprises 1/105/172 exemptés.
+- **N'est pas un outil d'estimation** : l'écran renvoie vers **Soumissions → Estimation IA**.
+- **Aucun contrôle de rôle** sur le module : tout utilisateur connecté peut dialoguer et déclencher des écritures ; le frein est le solde de crédits.
+
+---
+
+**Documentation générée à partir du code source vérifié** : `backend/routers/ai.py` (3541 lignes, 12 points d'accès), `backend/routers/ai_profiles.py` (804 lignes, 8 points d'accès), `backend/routers/data_import.py` (684 lignes), `frontend/src/pages/AssistantIAPage.tsx` (716 lignes), `frontend/src/components/ai/ClientImportModal.tsx` (243 lignes), `frontend/src/api/ai.ts`, `frontend/src/api/dataImport.ts`, `frontend/src/components/layout/TopBar.tsx` (bouton d'accès, lignes 312-320), `i18n/locales/fr/ai.json`.
+
+**Manuels liés** :
+- Module 08 (Ventes — Soumissions / **Estimation IA**) — `08-ventes-soumissions.md`
+- Module 05 (Gestion des contacts — clients importés) — `05-gestion-contacts.md`
+- Module 19 (Terrain — Immobilier, mini-assistant IA) — `19-terrain-immobilier.md`
+- Module 24 (Communication — Messagerie, mini-assistant IA) — `24-communication-messagerie.md`
+- Module 28 (Configuration — crédits IA, Stripe) — `28-configuration.md`
+- Module 30 (Métré PDF — profils experts) — `30-metre-pdf.md`
