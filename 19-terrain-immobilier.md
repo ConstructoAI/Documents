@@ -1,653 +1,809 @@
-# Module 19 — Immobilier (Promotion / Developpement)
+# Module 19 — Immobilier (promoteur et vitrine publique)
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/immobilier.py` (5248 lignes, 59 endpoints), `frontend/src/pages/ImmobilierPage.tsx` (13 onglets), `frontend/src/api/immobilier.ts`
-> **Tables PostgreSQL** : `terrains`, `projets_immo`, `financements`, `unites`, `phases_construction`, `inspections_immo`, `paiements_immo`, `deblocages`, `commercialisation`, `livraisons`, `documents_immo`, plus le sous-module `fonds_prevoyance` (Loi 16)
-> **Cadrage** : ce module est **focus promotion immobiliere et developpement** (terrains -> projets -> unites -> ventes/locations) — PAS un gestionnaire locatif complet (PMP). Il gere des unites individuelles avec champs locataires basiques mais sans table tenants dediee, sans cycle de bail formel, sans portail locataire.
+> **Version** : 3.0 (refonte vérifiée ligne par ligne contre le code source du 7 juillet 2026 — le module est désormais une application distincte à **deux surfaces** : vitrine publique et espace promoteur ; corrections majeures : route réelle `/immo` et non `/immobilier`, **14 onglets** et non 13, ajout de l'onglet Cadastre, du flux de publication vers la vitrine, de l'assistant IA, des modèles IA réels et des permissions réelles)
+> **Accès** : page de connexion de l'ERP → tuile « Immobilier » (lien interne), ou directement à l'URL `app.constructoai.ca/immo`. Retour à l'ERP par le lien « Portail Constructo AI » de la barre supérieure.
+> **Code de référence (application)** : application React **séparée** `IMMO_REACT/frontend` (base `/immo`, `App.tsx:41`), servie par le service `constructo-erp-react` (modèle B2B/C2B — pas de service d'hébergement dédié)
+> **Code de référence (backend)** : cinq routers montés dans `ERP_REACT/backend/erp_api.py` (bloc défensif) — `routers/immobilier.py` (espace promoteur, ≈ 61 points d'accès), `routers/immo_ai.py` (assistant IA, 5 points d'accès, 9 outils), `routers/fonds_prevoyance.py` (Loi 16, ≈ 31 points d'accès), `IMMO_REACT/backend/routers/public.py` (vitrine publique, 4 points d'accès), `IMMO_REACT/backend/routers/publish.py` (publication, 5 points d'accès)
+> **Chemins d'API réels** : `/api/erp/v1/immobilier` (promoteur), `/api/erp/v1/immo/ai` (assistant IA), `/api/erp/v1/fonds-prevoyance` (Loi 16), `/api/immo/v1/public` (vitrine, **sans authentification**), `/api/immo/v1/promoteur` (publier / retirer)
+> **Tables PostgreSQL** : une série `immo_*` **par tenant** (terrains, projets, financement, unités, inspections, paiements, déblocages, phases, commercialisation, livraisons, documents) ; une série `fp_*` **par tenant** pour la Loi 16 ; et **une table partagée** `public.immo_listings` (les annonces publiées, cloisonnées par colonne `tenant_schema`)
+> **Modèle IA** : analyses en profondeur = Claude Opus 4.8 (`claude-opus-4-8`) ; conversations, rapports et suggestions = Claude Sonnet 4.6 (`claude-sonnet-4-6`). Toute consommation IA est facturée aux **crédits IA prépayés** du tenant, avec une majoration de 30 %.
+> **Cadrage** : ce module couvre le **cycle de promotion immobilière neuve** (terrains → projets → financement → construction → unités → commercialisation → livraison), le **fonds de prévoyance des copropriétés (Loi 16)**, une **analyse cadastrale**, un **assistant IA**, et — nouveauté majeure — une **vitrine publique d'annonces** sur laquelle le promoteur publie ses unités à vendre. Ce n'est **pas** un gestionnaire locatif complet (pas de baux, pas de portail locataire, pas de génération de loyers) ni un connecteur vers Centris ou un registre officiel.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface (13 onglets)](#2-interface-13-onglets)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference](#4-reference)
-5. [Integrations & FAQ](#5-integrations-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
 ### 1.1 Mission du module
 
-Gerer le cycle complet de **promotion immobiliere** :
-- Acquisition de **terrains** (prospection, offres, etudes, achat)
-- Developpement de **projets immobiliers** (Condos / Locatif / Mixte / Commercial / Maisons)
-- Structuration du **financement** (Hypothecaire / Construction / Pont / Marge de credit) avec generation automatique des deblocages
-- Suivi des **phases de construction** avec conformites (CNB / CCE / CSST / Municipal) et deficiences (mineures / majeures / critiques)
-- Gestion des **unites** individuelles (Condo / Appartement / Commerce / Maison / Penthouse — 7 sous-types residentiels)
-- Strategie de **commercialisation** (pre-vente, courtier, marketing, brochures, maquette 3D)
-- **Livraison** finale aux acheteurs / locataires avec inspection pre-livraison + garantie + satisfaction
-- **Inspections** (planifiee / en cours / reussie / echouee / a reprendre) avec score conformite
-- **Paiements** projet (entrees / sorties)
-- **6 calculateurs financiers** (mensualite, amortissement, interets intercalaires, prime SCHL, ROI, cout total)
-- **4 endpoints IA Claude** : analyser projet, generer rapport financement, optimiser financement, chat
-- **Fonds prevoyance Loi 16** (sous-module pour copropriete)
+Donner à un promoteur ou entrepreneur général québécois un seul endroit pour **mener un projet immobilier neuf de bout en bout** — depuis le repérage d'un terrain jusqu'à la remise des clés — et pour **exposer publiquement les unités à vendre** sur une vitrine consultable par n'importe quel acheteur, sans qu'il ait à se connecter.
 
-### 1.2 Ce que le module ne fait PAS
+Le module répond à des besoins concrets et distincts selon la personne :
 
-> **Important** : c est un module **promotion / developpement**, pas un module **gestion locative complete**. Il **n implemente pas** :
-- Table `tenants` dediee (locataire = champ `locataire_nom` simple sur l unite, pas de fiche complete)
-- Cycle bail formel (`leases` table) — seulement `date_debut_bail` + `duree_bail_mois`
-- **Indexation annuelle** automatique des loyers
-- **Generation automatique mensuelle** des paiements de loyer
-- **Relances** / dunning sur paiements en retard
-- **Demandes de maintenance** locataire (pas de portail locataire)
-- **Portail web public** d annonces (pas d integration Centris)
-- **Multi-proprietaires** par projet (proprietaire = texte libre, pas FK)
-- **Cap Rate, DSCR, Cash-on-cash** (seulement ROI simple)
-- **Posting comptable automatique** des loyers/charges
-- **iCal / Google Calendar** sync sur expirations baux
+- Côté **acheteur / visiteur** : « Quelles propriétés neuves sont à vendre, dans quelle ville, à quel prix, et comment joindre le promoteur ? »
+- Côté **promoteur** : « Comment publier rapidement mes unités avec photos ? Où en sont mes terrains, mes financements, mes phases de chantier ? Quelle contribution au fonds de prévoyance dois-je prévoir pour ma copropriété ? Ce terrain est-il constructible ? »
 
-Pour ces fonctionnalites, considerer un module externe ou une evolution future.
+### 1.2 Deux surfaces dans une même application
 
-### 1.3 Acces
+Le module est une application React autonome (`IMMO_REACT`) servie sous `app.constructoai.ca/immo`. Elle présente **deux surfaces** partageant la même disposition (barre latérale foncée + barre supérieure) :
 
-- Sidebar -> **Immobilier** (icone Building2)
-- URL : `/immobilier`
-- Onglet par defaut : **Tableau de bord**
-- 13 onglets (cf. section 2)
+| Surface | Authentification | À qui elle s'adresse | Contenu |
+|---------|------------------|----------------------|---------|
+| **Vitrine publique** | Aucune (ouverte à tous) | Acheteurs, grand public | Accueil, recherche d'annonces, fiche détaillée avec coordonnées du promoteur |
+| **Espace promoteur** | Connexion SSO avec les identifiants de l'ERP | Entreprise (tenant) | Publication d'annonces, gestion complète (14 onglets), fonds de prévoyance Loi 16, cadastre, assistant IA |
 
-### 1.4 Permissions
+Le **cœur du module** est le **flux de publication** : une unité créée dans l'espace promoteur devient publiable (ou retirable) de la vitrine depuis l'écran « Mes annonces ». Publier crée ou met à jour une ligne dans la table partagée `public.immo_listings` ; la vitrine ne montre que les annonces actives.
 
-- Tous les utilisateurs authentifies du tenant peuvent CRUD toutes les entites Immobilier.
-- **IA** : guardee par `_check_credits()` — verifier solde credits prepayes avant chaque appel.
-- Pas de roles dedies « directeur immobilier », « courtier », « inspecteur ».
+### 1.3 Ce que le module fait (vérifié contre le code)
 
----
+- **Vitrine publique** : catalogue d'annonces avec recherche avancée (ville, type, prix, superficie, chambres, salles de bains, statut, tri), pagination (24 par page), fiche détaillée avec galerie de photos et bouton de contact par courriel.
+- **Publication** : publier ou retirer chaque unité, joindre jusqu'à **12 photos** (téléversement réel, compression automatique, glisser-déposer, réordonnancement, choix de la photo de couverture).
+- **Assistant de démarrage** (« Nouveau projet ») : un seul formulaire crée d'un coup un terrain, un projet et plusieurs unités.
+- **Gestion immobilière (14 onglets)** : tableau de bord, terrains, cadastre, projets, financement, construction (phases), unités, commercialisation, livraison, inspections, paiements, documents, calculateurs, fonds de prévoyance.
+- **Six calculateurs financiers** : mensualité, amortissement, intérêts intercalaires, prime SCHL, ROI, coût total — avec la capitalisation semestrielle propre aux hypothèques canadiennes.
+- **Génération automatique des déblocages** d'un financement de construction (7 étapes selon l'avancement).
+- **Fonds de prévoyance Loi 16** : copropriétés, inventaire des composantes, études, carnet d'entretien, projections sur 25 ans (3 scénarios), attestations de vente (art. 1069 C.c.Q.) et conseils IA.
+- **Analyse cadastrale** : recherche d'un lot par adresse ou numéro, carte OpenStreetMap, faisabilité (zonage), contraintes, avec rattachement à un projet.
+- **Assistant IA** : chat qui **propose** une action et l'exécute seulement après **confirmation** de l'utilisateur (créer un terrain, un projet, une unité, un financement, changer un statut, publier une annonce).
+- **Bilingue** français / anglais (bascule dans la barre supérieure) et **thème clair / sombre**.
 
-## 2. Interface (13 onglets)
+### 1.4 Ce que le module NE fait PAS (limites importantes)
 
-Source : `ImmobilierPage.tsx:37-51` — array `TABS`.
+> **À lire avant de vous fier au module.** Plusieurs attentes naturelles ne sont **pas** couvertes.
 
-| # | Cle              | Label                | Icone        | Contenu principal                                              |
-|---|------------------|----------------------|--------------|----------------------------------------------------------------|
-| 1 | `dashboard`      | Tableau de bord      | BarChart3       | KPI module + calculateur mensualite rapide                  |
-| 2 | `terrains`       | Terrains             | MapPin       | CRUD terrains (prospection -> acquis)                          |
-| 3 | `projets`        | Projets              | Building     | CRUD projets de developpement (5 types)                        |
-| 4 | `financement`    | Financement          | Landmark     | CRUD financements bancaires (4 types pret)                     |
-| 5 | `construction`   | Construction         | HardHat      | CRUD phases construction avec conformites + deficiences        |
-| 6 | `unites`         | Unites               | Home         | CRUD unites (5 types principaux + 8 sous-types)                |
-| 7 | `commercialisation` | Commercialisation | Megaphone    | Strategie pre-vente / location, courtier, marketing            |
-| 8 | `livraison`      | Livraison            | Key          | Livraison aux beneficiaires + garantie                         |
-| 9 | `inspections`    | Inspections          | ClipboardCheck | Inspections multi-types avec score conformite                |
-| 10| `paiements`      | Paiements            | CreditCard   | Mouvements financiers projet                                   |
-| 11| `documents`      | Documents            | FolderOpen   | Documents projet (10 categories)                               |
-| 12| `calculateurs`   | Calculateurs         | Calculator   | 6 sous-onglets calcul                                          |
-| 13| `fonds_prevoyance` | Fonds Prev. (Loi 16) | Shield     | Sous-module copropriete                                        |
+- **Pas de gestion locative.** Aucun écran de baux, de locataires, de dépenses locatives ni de portail locataire. Des libellés de traduction héritant de l'ERP existent pour ces notions, mais **ils ne sont branchés à aucun écran** de l'application Immobilier : ces modules n'existent pas ici.
+- **Onglets Inspections et Paiements en lecture seule.** Vous pouvez consulter les inspections et les paiements d'un projet, mais l'interface **ne permet pas** d'en créer, modifier ou supprimer (aucune barre de commande, aucune fenêtre de saisie). Ces données proviennent d'ailleurs (autres flux ou saisie technique).
+- **Onglet Documents sans vrai téléversement.** La fenêtre de saisie ne capture qu'un **« Chemin du fichier » en texte** plus des métadonnées ; elle ne téléverse aucun fichier (contrairement aux photos d'annonces). L'édition d'un document est impossible : on peut seulement créer et supprimer.
+- **Un seul vrai téléversement de fichiers** dans toute l'application : les **photos d'annonce**.
+- **Une seule exportation** : le **rapport du fonds de prévoyance** (Loi 16) téléchargeable en fichier `.md`. Aucun autre export PDF ou CSV ailleurs.
+- **Aucune connexion à Centris, à un registre officiel ou au rôle d'évaluation en temps réel.** Le cadastre s'appuie sur des données ouvertes (OpenStreetMap) à titre indicatif.
+- **Assistant IA absent de la vitrine publique** : il n'apparaît que pour un promoteur connecté.
+- **Superficies en mètres carrés (m²)** partout dans l'espace promoteur (le calcul de la valeur de reconstruction Loi 16 utilise, lui, le pied carré).
+- **Aucun rappel automatique** par courriel, notification ou calendrier sur les échéances (fin de financement, livraison prévue, expiration d'un document).
+- **Pas de rôles métier dédiés** (« directeur immobilier », « courtier », « inspecteur ») : voir les permissions ci-dessous.
 
-### 2.1 Onglet « Tableau de bord »
+### 1.5 Accès
 
-KPIs (cf. `GET /immobilier/dashboard`) :
-- Total terrains + repartition par statut
-- Total projets + repartition par statut
-- Total financement demande / approuve
-- Total unites + ventes / disponibles / louees
-- ROI estime moyen (projets en developpement)
+- **Depuis l'ERP** : page de connexion → tuile « Immobilier ».
+- **Directement** : `app.constructoai.ca/immo`.
+- **Écran par défaut (visiteur)** : l'Accueil de la vitrine.
+- **Écran par défaut (promoteur connecté)** : « Mes annonces ».
+- **Barre latérale** — section publique : **Accueil**, **Annonces** ; section visible selon l'état :
+  - Déconnecté : **Devenez promoteur** (mène à la création de compte ERP), **Espace promoteur** (connexion).
+  - Connecté : section repliable **Gestion** → **Mes annonces**, **Gestion immobilière**.
+- **Barre supérieure** : lien **« Portail Constructo AI »** (retour à l'ERP), bascule **FR / EN**, bascule **thème clair / sombre**, puis le menu de compte (connecté) ou les boutons **Devenez promoteur** + **Connexion** (déconnecté).
 
-Calculateur mensualite rapide integre (formulaire inline : capital + taux + duree).
+### 1.6 Permissions et rôles
 
-### 2.2 Onglet « Terrains »
+> **Point de sécurité important.** Contrairement à la plupart des autres modules de l'ERP, l'espace promoteur **n'impose aucun rôle** : tout utilisateur authentifié du tenant peut créer, modifier, supprimer **et publier sur la vitrine publique**.
 
-Tableau CRUD :
-- Adresse, ville, code postal, numero lot, numero cadastre
-- Superficie m2 / pi2
-- Zonage (`Residentiel` / `Commercial` / `Mixte` / `Industriel`)
-- Prix demande, evaluation municipale
-- Proprietaire (nom + contact texte libre)
-- Statut (`Prospection` / `Offre en cours` / `Acquis` / `En developpement` / `Rejete`)
-- Score faisabilite (1-100)
+| Action | Qui peut la faire | Garde technique |
+|--------|-------------------|-----------------|
+| Consulter la vitrine, chercher, ouvrir une fiche | **N'importe qui** (public) | Aucune (endpoints publics) |
+| Se connecter à l'espace promoteur | Un utilisateur du tenant (mêmes identifiants que l'ERP) | SSO ERP en deux temps |
+| Gérer les 14 onglets (terrains, projets, unités, etc.) | Tout utilisateur connecté du tenant | `get_current_user` (aucun `require_role`) |
+| Publier / retirer une annonce, gérer les photos | Tout utilisateur connecté du tenant | `get_current_promoteur` + `require_publish_access` |
+| Utiliser l'assistant IA (proposer → confirmer) | Tout utilisateur connecté, **si le tenant a des crédits IA** | `get_current_user` + crédits prépayés |
+| Utiliser les outils IA du fonds de prévoyance | Tout utilisateur connecté, **si crédits IA** | `get_current_user` + crédits prépayés |
 
-Modale creation : tous les champs incluant servitudes, contraintes environnementales, certificat localisation, etude sol, permis preliminaire.
+- **Cloisonnement par tenant** : toutes les données `immo_*` et `fp_*` vivent dans le schéma PostgreSQL propre à l'entreprise ; la table partagée `public.immo_listings` est toujours filtrée par `tenant_schema`. Aucun accès entre tenants n'est possible.
+- **Mode consultation (abonnement inactif)** : l'accès du promoteur dérive de l'état de l'abonnement (voir §5.2). Un abonnement **annulé ou absent** place le tenant en **mode consultation** : les lectures fonctionnent, mais **publier ou retirer une annonce est refusé** avec le message « Mode consultation : abonnement inactif » (erreur 403). Une entreprise **désactivée** est carrément déconnectée (401).
+- **Crédits IA** : chaque appel à l'assistant ou aux conseils Loi 16 vérifie d'abord la disponibilité du service, puis le solde de crédits prépayés ; un solde épuisé renvoie une erreur **402** affichée à l'écran. Le super-administrateur et les sociétés exemptées ne sont pas bloqués.
 
-Filtres : recherche + statut.
+### 1.7 Les écrans, d'un coup d'œil
 
-### 2.3 Onglet « Projets »
-
-Tableau CRUD :
-- Nom projet, type (`Condos` / `Locatif` / `Mixte` / `Commercial` / `Maisons`)
-- Nombre logements
-- Budget total, cout terrain, cout construction
-- Revenus ventes estimes
-- ROI estime %
-- Date debut/fin planifiees
-- Statut (`Planification` / `En cours` / `Construction` / `Termine` / `Annule`)
-- Lien terrain (FK terrain_id)
-
-Vue detail : enrichi avec `unitesCount` (compteur d unites associees).
-
-### 2.4 Onglet « Financement »
-
-Tableau CRUD :
-- Banque (texte libre)
-- Type pret (`Hypothecaire` / `Construction` / `Pont` / `Marge de credit`)
-- Montant demande, montant approuve
-- Taux interet annuel
-- Duree amortissement (mois)
-- Frequence remboursement (Mensuel / Bi-mensuel / etc.)
-- Date debut, date fin
-- Statut (`En preparation` / `Demande en cours` / `Approuve` / `Refuse`)
-- Garanties exigees (texte libre)
-
-Lie a un projet via `projet_id`.
-
-### 2.5 Onglet « Construction » (Phases)
-
-Tableau CRUD avec **suivi conformite riche** :
-- Numero phase, nom phase, sequence
-- Statut (`A venir` / `En cours` / `En retard` / `Completee` / `Suspendue`)
-- Pourcentage completion
-- Budget prevu / cout reel + variance auto
-- Entrepreneur, supervisor (nom)
-- Dates debut / fin reelles
-- **Conformite** : 4 booleans (`conforme_cnb` / `conforme_cce` / `conforme_csst` / `conforme_municipal`)
-- **Deficiences** : 3 compteurs (mineures / majeures / critiques)
-
-Templates de phases standards : `GET /phases/types` retourne une liste de phases-types par type de projet.
-
-### 2.6 Onglet « Unites »
-
-Tableau CRUD :
-- Numero unite, etage, orientation
-- Type unite (`Condo` / `Appartement` / `Commerce` / `Maison` / `Penthouse`)
-- Sous-type (`Studio` / `3 1/2` / `4 1/2` / `5 1/2` / `6 1/2` / `Penthouse` / `Local commercial` / `Bureau`)
-- Superficie m2 / pi2
-- Nombre chambres, nombre salles de bain
-- Equipements, finitions speciales (texte libre)
-- **Pricing** : prix vente OU loyer mensuel (selon vocation)
-- Statut (`Disponible` / `Vendu` / `Loue`)
-- Acheteur : nom + contact + date promesse + date vente finale (si vendu)
-- Locataire : nom + date debut bail + duree bail mois (si loue)
-
-> **Vocation mixte** : une unite peut avoir prix_vente ET loyer_mensuel renseignes (changement de vocation possible).
-
-### 2.7 Onglet « Commercialisation »
-
-Tableau CRUD strategie de vente / location par projet :
-- Strategie vente (`Pre-vente`, etc.)
-- Prix moyen vente / loyer moyen
-- Objectif pre-ventes % / Taux pre-ventes actuel %
-- Nombre unites vendues / louees
-- Budget marketing
-- Courtier nom + commission %
-- **Assets pretes** : booleans `brochure_prete` / `plans_vente_prets` / `maquette_3d`
-- Site web (URL externe)
-
-### 2.8 Onglet « Livraison »
-
-Tableau CRUD livraison aux beneficiaires :
-- Numero livraison
-- Unite (FK unite_id)
-- Beneficiaire : nom + type (`acheteur` ou `locataire`)
-- Date livraison prevue / reelle
-- **Inspection pre-livraison** (texte libre rapport) + liste deficiences (texte)
-- **Booleans documents** : `cles_remises` / `acte_vente_signe` / `bail_signe` / `certificat_conformite`
-- Duree garantie (mois)
-- Note satisfaction (1-10)
-
-### 2.9 Onglet « Inspections »
-
-Tableau CRUD inspections (constructions, normes) :
-- Type inspection (texte libre)
-- Date planifiee / date realisee
-- Inspecteur nom
-- Statut (`Planifiee` / `En cours` / `Reussie` / `Echouee` / `A reprendre`)
-- **Score conformite** (numerique)
-- **Deficiences** : 3 compteurs (mineures / majeures / critiques)
-- Corrections requises (texte) + date limite corrections
-- Reinspection reussie (boolean)
-- **Conformite** : 4 booleans (CNB / CCE / CSST / Municipal)
-- **Couts** : cout inspection + cout corrections
-
-### 2.10 Onglet « Paiements »
-
-Tableau CRUD paiements (entrees/sorties projet) :
-- Type paiement (`construction`, `financement`, etc. — texte libre)
-- Categorie (texte libre)
-- Montant
-- Description, beneficiaire
-- Date paiement
-- Statut (`Prevu` defaut, `Recu`, `En retard`, etc.)
-
-> Distinct des `payroll_entries` (Module 9) et `factures` (Module 7). Vue projet uniquement.
-
-### 2.11 Onglet « Documents »
-
-Tableau CRUD documents projet :
-- Nom document, categorie (10 valeurs : `Contrats` / `Permis` / `Plans et dessins` / `Etudes techniques` / `Financement` / `Assurances` / `Correspondance` / `Rapports inspection` / `Photos` / `Autre`)
-- Type fichier (PDF, image, etc.)
-- Chemin fichier (URI/path)
-- Taille KB
-- Confidentiel (boolean)
-- Date document, date expiration (utile permis)
-- Filtre par categorie + recherche
-
-> **Pas d upload integre** dans cette implementation : champ `chemin_fichier` est une reference texte. Pour upload de fichiers, utiliser plutot Module 8 Dossiers (attachments BYTEA).
-
-### 2.12 Onglet « Calculateurs »
-
-6 sous-onglets, chacun avec son formulaire de calcul :
-
-| Sous-onglet              | Inputs                                                         | Outputs                                                  |
-|--------------------------|----------------------------------------------------------------|----------------------------------------------------------|
-| **Mensualite**           | Capital, taux annuel, duree (annees)                           | Mensualite, total cout, total interets                  |
-| **Amortissement**        | Capital, taux, duree                                           | Tableau periode/paiement/capital/interets/solde         |
-| **Interets intercalaires** | Montant emprunte, taux, duree construction (mois)            | Total interets, breakdown mensuel                        |
-| **Prime SCHL**           | Montant pret, valeur propriete                                 | Ratio LTV, prime %, prime montant, total pret           |
-| **ROI**                  | Investissement, revenus annuels, depenses annuelles, duree    | ROI %, benefice net annuel, payback period              |
-| **Cout total**           | Capital, taux, duree                                           | Decomposition complete (capital + interets cumules)     |
-
-Tous les calculs cote backend (`POST /immobilier/calculer-...`) - aucune dependance JS lourde cote client.
-
-### 2.13 Onglet « Fonds Prevoyance (Loi 16) »
-
-Sous-module separe (`FondsPrevoyanceTab` importe). Gere les fonds de prevoyance obligatoires pour copropriete au Quebec selon Loi 16 (etude du fonds, contributions, decisions).
-
-Pour les details, voir le composant `FondsPrevoyanceTab` (probablement un onglet a part dans `fonds_prevoyance.py` router).
+| Surface | Écran | Route | Rôle |
+|---------|-------|-------|------|
+| Vitrine | Accueil | `/` | Héro, recherche, indicateurs, annonces récentes |
+| Vitrine | Annonces | `/annonces` | Recherche avancée + grille paginée |
+| Vitrine | Fiche | `/annonce/:id` | Galerie, caractéristiques, contact |
+| Promoteur | Connexion | `/promoteur/connexion` | SSO ERP |
+| Promoteur | Mes annonces | `/promoteur` | Publier / retirer + photos |
+| Promoteur | Nouveau projet | `/promoteur/nouveau-projet` | Assistant de démarrage guidé |
+| Promoteur | Gestion immobilière | `/promoteur/immobilier` | 14 onglets (dont Cadastre et Fonds de prévoyance) |
 
 ---
 
-## 3. Workflows pas-a-pas
+## 2. Interface
 
-### 3.1 Acquerir un terrain (workflow complet)
+### 2.0 Éléments communs aux deux surfaces
 
-1. Onglet **Terrains** -> bouton **+ Nouveau terrain**.
-2. Saisir adresse, ville, lot/cadastre, superficie, zonage.
-3. Statut initial : `Prospection`.
-4. Renseigner **Score faisabilite** (1-100) apres analyse preliminaire.
-5. Quand offre formulee : passer statut a `Offre en cours`, renseigner `prix_offre`.
-6. Quand achat conclu : passer statut a `Acquis`, renseigner `prix_final`, dates, certificat localisation, etude sol.
-7. Quand projet de developpement demarre : passer statut a `En developpement`.
-8. Si refus : statut `Rejete` (conserve historique).
-
-### 3.2 Creer un projet de developpement
-
-1. Onglet **Projets** -> bouton **+ Nouveau projet**.
-2. Saisir nom, type (`Condos` / `Locatif` / `Mixte` / `Commercial` / `Maisons`), nombre logements.
-3. Selectionner le terrain associe (FK terrain_id).
-4. Renseigner budgets (cout terrain, cout construction, total).
-5. Estimer revenus ventes + ROI %.
-6. Definir dates debut/fin planifiees.
-7. Statut initial `Planification`.
-
-### 3.3 Structurer le financement
-
-1. Onglet **Financement** -> bouton **+ Nouveau financement**.
-2. Selectionner projet (FK projet_id).
-3. Saisir banque (texte libre), type pret (`Hypothecaire` / `Construction` / `Pont` / `Marge de credit`).
-4. Renseigner montant demande, taux interet annuel, duree amortissement.
-5. Statut `En preparation` -> `Demande en cours` -> `Approuve` ou `Refuse`.
-6. Apres approbation : renseigner montant approuve, date debut.
-
-### 3.4 Generer automatiquement les deblocages
-
-1. Apres financement `Approuve` -> bouton **Generer deblocages auto**.
-2. `POST /immobilier/deblocages/generer-auto?financementId=X`.
-3. Backend genere une serie de deblocages selon le `montantTotal` approuve, repartis sur la duree de construction.
-4. Chaque deblocage est cree avec statut `Planifie`, montant, date prevue.
-5. Suivre l avancement de chaque deblocage individuellement.
-
-### 3.5 Planifier les phases de construction
-
-1. Onglet **Construction** -> bouton **+ Nouvelle phase**.
-2. Pour pre-remplir avec les phases types : `GET /phases/types` -> templates par type de projet.
-3. Saisir : numero phase, nom, sequence, dates planifiees, budget prevu, entrepreneur, supervisor.
-4. Statut initial `A venir`.
-5. Au demarrage : passer a `En cours`, mettre a jour `pourcentage_completion` regulierement.
-6. Inscrire les **deficiences** detectees (mineures / majeures / critiques) au fur et a mesure.
-7. Cocher les **conformites** (CNB / CCE / CSST / Municipal) une fois validees.
-8. A la fin : statut `Completee`, renseigner `cout_reel` (variance vs `budget_prevu`).
-
-### 3.6 Creer les unites du projet
-
-1. Onglet **Unites** -> bouton **+ Nouvelle unite**.
-2. Selectionner projet.
-3. Renseigner numero unite, etage, type, sous-type, superficie.
-4. Si vente : renseigner `prix_vente`. Si location : `loyer_mensuel`. Si mixte : les deux.
-5. Statut initial `Disponible`.
-6. Apres vente : statut `Vendu` + acheteur + dates.
-7. Apres location : statut `Loue` + locataire + date debut bail + duree mois.
-
-### 3.7 Definir la strategie de commercialisation
-
-1. Onglet **Commercialisation** -> bouton **+ Nouvelle commercialisation**.
-2. Selectionner projet.
-3. Saisir strategie (ex. `Pre-vente`), prix moyen vente, loyer moyen.
-4. Definir objectif pre-ventes % (ex. 50% pour declenchement construction selon banque).
-5. Renseigner courtier nom + commission %.
-6. Cocher assets pretes (brochure / plans vente / maquette 3D) au fil de l avancement.
-7. Au fil des ventes : mettre a jour `taux_pre_ventes_actuel_pct` + `nombre_unites_vendues`.
-
-### 3.8 Inspecter une phase / une unite
-
-1. Onglet **Inspections** -> bouton **+ Nouvelle inspection**.
-2. Saisir type inspection, date planifiee, inspecteur.
-3. Statut `Planifiee`.
-4. Le jour J : passer a `En cours`, renseigner observations.
-5. Apres inspection : statut `Reussie` ou `Echouee` ou `A reprendre`.
-6. Si deficiences : compter mineures / majeures / critiques + saisir corrections requises + date limite.
-7. Cocher les 4 conformites (CNB / CCE / CSST / Municipal).
-8. Saisir score conformite (numerique).
-9. Renseigner couts (inspection + corrections).
-10. Si reinspection necessaire : creer une nouvelle inspection lien (a verifier en prod).
-
-### 3.9 Livrer une unite a un acheteur / locataire
-
-1. Onglet **Livraison** -> bouton **+ Nouvelle livraison**.
-2. Selectionner unite (FK unite_id).
-3. Saisir beneficiaire nom + type (`acheteur` ou `locataire`).
-4. Date livraison prevue.
-5. Avant livraison : effectuer **inspection pre-livraison** (texte libre rapport).
-6. Lister les **deficiences** detectees a corriger avant remise des cles.
-7. Au moment de la livraison : cocher booleans (`cles_remises`, `acte_vente_signe` ou `bail_signe`, `certificat_conformite`).
-8. Renseigner duree garantie (mois) — typiquement 12 mois pour vices apparents, 36 mois vices caches.
-9. Apres satisfaction client : noter (1-10).
-
-### 3.10 Utiliser les calculateurs financiers
-
-#### Mensualite
-
-1. Onglet Calculateurs -> sous-onglet **Mensualite**.
-2. Saisir : capital, taux annuel %, duree (annees).
-3. **Calculer** -> `POST /immobilier/calculer-mensualite`.
-4. Affiche : mensualite, cout total, total interets.
-
-#### Amortissement
-
-1. Sous-onglet **Amortissement** -> meme inputs.
-2. `POST /immobilier/calculer-amortissement`.
-3. Affiche tableau : periode, paiement, part capital, part interets, solde restant.
-
-#### Interets intercalaires
-
-1. Sous-onglet **Interets intercalaires**.
-2. Saisir : montant emprunte, taux annuel, duree construction (mois).
-3. `POST /immobilier/calculer-interets-intercalaires`.
-4. Affiche : interets intercalaires totaux + breakdown mensuel.
-5. Important pour budget construction (interets a capitaliser pendant les travaux).
-
-#### Prime SCHL / CMHC
-
-1. Sous-onglet **Prime SCHL**.
-2. Saisir : montant pret, valeur propriete.
-3. `POST /immobilier/calculer-prime-schl`.
-4. Affiche : ratio LTV, prime %, prime montant, total pret.
-5. Si LTV > 80% : prime SCHL/CMHC obligatoire au Canada.
-
-#### ROI
-
-1. Sous-onglet **ROI**.
-2. Saisir : investissement total, revenus annuels, depenses annuelles, duree.
-3. `POST /immobilier/calculer-roi`.
-4. Affiche : ROI %, benefice net annuel, periode payback.
-
-#### Cout total
-
-1. Sous-onglet **Cout total** -> capital + taux + duree.
-2. `POST /immobilier/calculer-cout-total`.
-
-### 3.11 Analyser un projet avec IA
-
-1. Onglet Projets -> selectionner projet -> bouton **Analyser IA**.
-2. `POST /immobilier/ia/analyser-projet` avec `projet_id`.
-3. Backend (verifie credits IA disponibles) :
-   - Recupere donnees projet + financement + commercialisation.
-   - Appelle Claude Sonnet 4.6.
-   - Retourne JSON : score faisabilite (1-10), risques, opportunites, recommandations.
-4. Affiche dans modale.
-
-### 3.12 Generer rapport financement IA
-
-1. Onglet Financement -> bouton **Generer rapport IA**.
-2. `POST /immobilier/ia/rapport-financement` avec `financement_id`.
-3. Backend genere un **rapport markdown** complet (executive summary, structure, deblocages, ratios, risques).
-4. Telechargeable / exportable.
-
-### 3.13 Optimiser la structure de financement IA
-
-1. Onglet Financement -> bouton **Optimiser IA**.
-2. `POST /immobilier/ia/optimiser-financement` avec contexte projet.
-3. Claude propose des recommandations de structuration.
-
-### 3.14 Chat IA contextuel
-
-1. Disponible globalement dans le module Immobilier.
-2. `POST /immobilier/ia/chat` avec question + contexte.
-3. Reponse Claude basee sur les donnees Immobilier du tenant.
+- **Barre latérale** : titre « Immobilier », sous-titre « Constructo AI », pied « Constructo AI © 2026 ». Les entrées changent selon que vous êtes connecté ou non (voir §1.5).
+- **Barre supérieure** : bouton hamburger (sur mobile), lien « Portail Constructo AI » (retour à l'ERP), titre de la page courante, bascule FR / EN, bascule thème clair / sombre.
+- **Langue** : la préférence est conservée localement (clé `immo_lang`). L'interface, et les réponses de l'assistant IA, s'adaptent au français ou à l'anglais.
+- **Session** : le jeton de connexion du promoteur est conservé localement (clé `immo_token`). S'il expire ou est révoqué, une erreur 401 déclenche une **déconnexion automatique** et un retour à la page de connexion — il n'y a pas d'écran d'avertissement de révocation dédié.
 
 ---
 
-## 4. Reference
+### 2.1 Vitrine — Accueil
 
-### 4.1 Statuts par entite
+Page d'entrée du grand public.
 
-| Entite       | Statuts (verbatim)                                                                |
-|--------------|-----------------------------------------------------------------------------------|
-| Terrain      | `Prospection`, `Offre en cours`, `Acquis`, `En developpement`, `Rejete`           |
-| Projet       | `Planification`, `En cours`, `Construction`, `Termine`, `Annule`                  |
-| Unite        | `Disponible`, `Vendu`, `Loue`                                                     |
-| Financement  | `En preparation`, `Demande en cours`, `Approuve`, `Refuse`                        |
-| Phase        | `A venir`, `En cours`, `En retard`, `Completee`, `Suspendue`                      |
-| Deblocage    | `Planifie`, `En cours`, `Approuve`, `Debloque`                                    |
-| Inspection   | `Planifiee`, `En cours`, `Reussie`, `Echouee`, `A reprendre`                      |
+- **Héro** : titre « Trouvez votre prochaine propriété », un sous-titre, et une **barre de recherche** (indication « Ville, quartier, type de propriété… ») avec le bouton **Rechercher**, qui redirige vers la liste des annonces en appliquant la recherche.
+- **Quatre indicateurs clés** (alimentés par `GET /public/stats`) : **Annonces disponibles**, **Villes desservies**, **Promoteurs**, **Prix moyen**. Pendant le chargement, la valeur affiche « … » ; si elle est indisponible, « — ».
+- **Annonces récentes** : une grille de six cartes d'annonces, avec un lien « Tout voir ».
+- **Appel à l'action promoteur** (bas de page) : « Vous développez des projets immobiliers ? » avec les boutons **Devenez promoteur** (création de compte) et **J'ai déjà un compte** (connexion).
+- **États** : un indicateur de chargement au démarrage ; un message « Aucune annonce pour le moment » s'il n'y a rien à afficher.
 
-### 4.2 Types
+**Carte d'annonce (élément réutilisé partout)** : photo de couverture (ou une icône si aucune photo), un badge de **statut** dans le coin supérieur gauche, un badge de **type** dans le coin supérieur droit, le titre, la ville, une description tronquée, des icônes chambres / salles de bains / superficie, le prix (ou « Prix sur demande »), et « Voir détails ».
 
-| Champ              | Valeurs                                                          |
-|--------------------|------------------------------------------------------------------|
-| Zonage terrain     | `Residentiel`, `Commercial`, `Mixte`, `Industriel`               |
-| Type projet        | `Condos`, `Locatif`, `Mixte`, `Commercial`, `Maisons`            |
-| Type pret          | `Hypothecaire`, `Construction`, `Pont`, `Marge de credit`        |
-| Type unite         | `Condo`, `Appartement`, `Commerce`, `Maison`, `Penthouse`        |
-| Sous-type unite    | `Studio`, `3 1/2`, `4 1/2`, `5 1/2`, `6 1/2`, `Penthouse`, `Local commercial`, `Bureau` |
-| Type beneficiaire  | `acheteur`, `locataire` (livraison)                              |
-| Categorie document | 10 valeurs (cf. section 2.11)                                    |
-
-### 4.3 Conformites construction (4 booleans)
-
-- `conforme_cnb` : Code National du Batiment
-- `conforme_cce` : Code de Construction du Quebec
-- `conforme_csst` : Commission de la sante et securite au travail (legacy CSST, devenu CNESST)
-- `conforme_municipal` : Reglements municipaux locaux
-
-### 4.4 Deficiences (3 niveaux)
-
-- **Mineures** : esthetique, finition, ajustements rapides
-- **Majeures** : fonctionnel mais non conforme au plan, necessite reprise
-- **Critiques** : securite, structure, code — reprise obligatoire avant continuation
-
-### 4.5 Calculs financiers (formules)
-
-| Calcul                  | Formule                                                                 |
-|-------------------------|-------------------------------------------------------------------------|
-| **Mensualite**          | `M = P * r * (1+r)^n / ((1+r)^n - 1)` ou r = taux mensuel, n = nb mois  |
-| **Total cout**          | `M * n` (cout total des paiements)                                      |
-| **Total interets**      | `(M * n) - P` (cout - capital)                                          |
-| **Interets intercalaires** | Cumul des interets simples mensuels pendant duree construction       |
-| **Prime SCHL**          | Selon table CMHC : LTV 80-85% = 2.8%, 85-90% = 3.1%, 90-95% = 4.0%      |
-| **ROI %**               | `((revenus - depenses) / investissement) * 100`                         |
-| **Payback (annees)**    | `investissement / benefice_net_annuel`                                  |
-
-### 4.6 Endpoints principaux
-
-**Liste exhaustive : 59 endpoints**, regroupes par entite. Voici les principaux :
-
-| Entite          | Endpoints CRUD                                                                |
-|-----------------|-------------------------------------------------------------------------------|
-| Dashboard       | `GET /immobilier/dashboard`                                                   |
-| Terrains        | `GET POST /terrains`, `GET PUT DELETE /terrains/{id}`                         |
-| Projets         | `GET POST /projets`, `GET PUT DELETE /projets/{id}`                           |
-| Financements    | `GET POST /financements`, `GET PUT DELETE /financements/{id}`                 |
-| Unites          | `GET POST /unites`, `PUT DELETE /unites/{id}`                                 |
-| Inspections     | `GET POST /inspections`, `PUT /inspections/{id}`                              |
-| Paiements       | `GET POST /paiements`                                                         |
-| Deblocages      | `GET POST PUT DELETE /deblocages[/{id}]`, `POST /deblocages/generer-auto`     |
-| Phases          | `GET POST PUT DELETE /phases[/{id}]`, `GET /phases/types`                     |
-| Commercialisation | `GET POST PUT DELETE /commercialisation[/{id}]`                             |
-| Livraisons      | `GET POST PUT DELETE /livraisons[/{id}]`                                      |
-| Documents       | `GET POST DELETE /documents[/{id}]`                                           |
-| Calculateurs    | 6 endpoints `POST /calculer-{mensualite,amortissement,interets-intercalaires,prime-schl,roi,cout-total}` |
-| IA              | 4 endpoints `POST /ia/{analyser-projet,chat,rapport-financement,optimiser-financement}` |
-
-### 4.7 Tables PostgreSQL
-
-| Table                 | Role                                                       |
-|-----------------------|------------------------------------------------------------|
-| `terrains`            | Terrains (prospection -> developpement)                    |
-| `projets_immo`        | Projets de developpement                                   |
-| `financements`        | Financements bancaires                                     |
-| `unites`              | Unites individuelles (vente OU location)                   |
-| `phases_construction` | Phases avec conformites + deficiences                      |
-| `deblocages`          | Deblocages financement (auto-generables)                   |
-| `inspections_immo`    | Inspections multi-types                                    |
-| `paiements_immo`      | Paiements projet                                           |
-| `commercialisation`   | Strategie pre-vente                                        |
-| `livraisons`          | Livraisons aux beneficiaires                               |
-| `documents_immo`      | Documents projet (references texte, pas BYTEA)             |
-
-### 4.8 Validations & limites
-
-| Regle                                  | Effet                                                  |
-|----------------------------------------|--------------------------------------------------------|
-| `adresse` terrain vide                 | HTTP 400                                               |
-| Statut hors enum (entite donnee)       | HTTP 400 ou DB CHECK                                   |
-| Suppression terrain avec projet associe | (verifier en prod — cascade ou refus)                 |
-| Calcul ROI avec depenses > revenus     | ROI negatif retourne                                   |
-| LTV > 95% pour prime SCHL              | Generalement refuse (regle CMHC)                       |
-| IA appel sans credits                  | HTTP 402 (Payment Required)                            |
+**Badge de statut** : Disponible (vert), Réservé (ambre), Vendu (gris), Annonce (bleu, pour tout autre cas).
 
 ---
 
-## 5. Integrations & FAQ
+### 2.2 Vitrine — Annonces (recherche avancée)
 
-### 5.1 Integration CRM
+Écran de recherche comparable à un portail de type Centris. **Tous les filtres sont pilotés par l'adresse (URL)**, ce qui rend une recherche partageable par simple copier-coller du lien.
 
-> **Limitee** : le proprietaire de terrain est stocke comme **texte libre** (`proprietaire_nom` + `proprietaire_contact`), pas comme FK vers `companies`.
+**Ligne de base (toujours visible)**
 
-Pas de lookup automatique vers le CRM. Pour des analyses commerciales croisees, utiliser des recherches textuelles plutot que jointures.
+| Champ | Type | Options |
+|-------|------|---------|
+| Rechercher | Texte | Recherche libre |
+| Ville | Menu déroulant | Villes réelles présentes dans les annonces (`GET /public/filters`) |
+| Type de propriété | Menu déroulant | Condo, Appartement, Maison, Commerce, Penthouse, Autre |
+| Trier par | Menu déroulant | Plus récentes, Prix croissant, Prix décroissant, Grande superficie |
 
-### 5.2 Integration Comptabilite
+**Recherche avancée (panneau dépliable)**
 
-- **Pas d ecriture journal automatique** depuis Immobilier vers Comptabilite.
-- Les `paiements_immo` (table specifique au module) NE sont PAS reflectees dans `journal_entries`.
-- Pour comptabiliser : creer manuellement les ecritures dans Module 7 (Comptabilite) ou utiliser un export CSV.
+| Champ | Type |
+|-------|------|
+| Prix min / Prix max | Nombre ($) |
+| Superficie min / Superficie max | Nombre (m²) |
+| Chambres | 1+ à 5+ |
+| Salles de bains | 1+ à 3+ |
+| Statut | Tous, Disponible, Réservé, Vendu |
 
-### 5.3 Integration Construction (Module Projets)
-
-> **Pas de lien direct** entre `projets_immo` (Immobilier) et `projects` (Module 1 Projets).
-
-Les phases construction d Immobilier (`phases_construction`) sont **distinctes** des phases projet (`project_phases` du Module 1). Pour suivre un meme chantier dans les deux modules, dupliquer les informations.
-
-### 5.4 Integration Conformite
-
-- Les conformites par phase (CNB / CCE / CSST / Municipal) sont des **booleans simples** sans lien vers les attestations CNESST/RBQ stockees dans le module Conformite (`conformite.py`).
-- Pour une vue centralisee : consulter Conformite separement.
-
-### 5.5 Integration Documents
-
-- Les `documents_immo` sont des **references texte** (chemin_fichier URI/path).
-- Pour upload de fichier reel : utiliser Module 8 (Dossiers) -> attachments BYTEA, puis referencer dans Immobilier via `chemin_fichier` = URL du dossier.
-
-### 5.6 Integration IA / Credits
-
-- 4 endpoints IA (`/ia/analyser-projet`, `/ia/chat`, `/ia/rapport-financement`, `/ia/optimiser-financement`).
-- Tous **deduisent des credits** prepayes (`tenant_settings.ai_credits_balance_usd`).
-- Tracking dans `ai_usage` table (feature = `immobilier_*`).
-- Modele : `claude-sonnet-4-6` (vision + textes longs).
-
-### 5.7 Integration Calendrier
-
-- **Aucune integration** : pas d export iCal / Google Calendar.
-- Pas de notifications automatiques sur date echeance financement, fin bail, date limite corrections, livraison prevue.
-- Recommandation : suivi manuel via le tableau de bord ou ajouter manuellement au Calendrier (`/calendar`).
-
-### 5.8 FAQ
-
-**Q : Le module gere-t-il la location longue duree (PMP) ?**
-R : **PARTIELLEMENT**. Les unites peuvent avoir un statut `Loue` avec `locataire_nom` + dates bail, mais il n y a **pas** de gestion complete de baux (renouvellement auto, indexation), pas de portail locataire, pas de generation automatique des paiements de loyer mensuels. Pour une gestion locative complete (PMP type Buildium / AppFolio), utiliser une solution externe.
-
-**Q : Y a-t-il un portail web public pour les annonces ?**
-R : **NON**. Aucune integration Centris (DuProprio/MLS), aucune page publique d annonces. Le champ `site_web` dans Commercialisation est juste une URL externe a renseigner manuellement.
-
-**Q : Comment generer les paiements de loyer mensuels automatiquement ?**
-R : **Pas implemente**. Saisir manuellement chaque mois dans l onglet Paiements. Alternative : exporter en CSV puis importer en lot via API.
-
-**Q : Le module calcule-t-il automatiquement la rentabilite (Cap Rate, DSCR) ?**
-R : **Partiellement**. Seul le **ROI** est calcule via le calculateur dedie. Pas de Cap Rate, pas de Debt Service Coverage Ratio (DSCR), pas de Cash-on-Cash Return. Calculs a faire manuellement avec les donnees disponibles.
-
-**Q : Comment fonctionne la generation automatique des deblocages ?**
-R : `POST /immobilier/deblocages/generer-auto?financementId=X` repartit le `montantTotal` du financement approuve sur des deblocages periodiques (mensuels par defaut, a verifier en prod). Statut initial `Planifie`, a passer a `En cours` puis `Approuve` puis `Debloque` au fil du temps.
-
-**Q : Les conformites CNB / CCE / CSST / Municipal sont-elles validees automatiquement ?**
-R : **NON**. Ce sont 4 simples checkbox manuelles a cocher par l utilisateur apres validation reelle (ex. apres reception du certificat conformite municipal).
-
-**Q : Que se passe-t-il quand une phase a des deficiences critiques ?**
-R : **Aucun blocage automatique**. Les compteurs `deficiences_critiques > 0` sont juste informatifs. La phase peut continuer en statut `En cours` meme avec critiques. Bonne pratique : suspendre manuellement (`statut = Suspendue`) jusqu a correction.
-
-**Q : Les calculateurs financiers stockent-ils les resultats ?**
-R : **NON**. Chaque appel calculateur est un POST sans persistance. Pour archiver un calcul (ex. amortissement), copier-coller les resultats dans les notes du financement ou les documents projet.
-
-**Q : Comment gerer les vices caches apres livraison ?**
-R : Le champ `duree_garantie_mois` informe la duree (typiquement 36 mois au Quebec pour vices caches). Pour suivre les reclamations : creer une nouvelle inspection (statut `A reprendre`) liee a l unite/projet.
-
-**Q : Le rapport financement IA inclut-il des recommandations CMHC/SCHL ?**
-R : Le rapport markdown couvre la structure du financement et les ratios. Si une prime SCHL est applicable (LTV > 80%), Claude la mentionne probablement, mais le calcul precis se fait via le calculateur dedie (`POST /calculer-prime-schl`).
-
-**Q : Y a-t-il un workflow d approbation pour les deblocages ?**
-R : **Pas de workflow formel** (pas de roles approuvateur). Chaque utilisateur peut passer manuellement le statut `Planifie` -> `En cours` -> `Approuve` -> `Debloque` via PUT.
-
-**Q : Le module Loi 16 (Fonds Prevoyance) est-il integre ou separe ?**
-R : Implemente comme un **sous-onglet** d Immobilier (`fonds_prevoyance`) mais utilise un router separe (`fonds_prevoyance.py`). Pour la documentation detaillee, voir le manuel Module 28 Administration ou la documentation specifique Loi 16.
-
-**Q : Combien d unites maximum par projet ?**
-R : Pas de limite hard-codee. Limite pratique : performance UI (la pagination peut etre adaptee si > 100 unites par projet).
-
-**Q : Comment gerer les unites avec changement de vocation (vente -> location ou inverse) ?**
-R : Modifier le statut + remplir/vider les champs correspondants (`acheteur_*` vs `locataire_*`). Aucun verrou DB n empeche d avoir les deux series remplies simultanement.
+- Boutons **Appliquer** et **Réinitialiser**.
+- **Résultats** : un compteur « N annonces », la grille de cartes (24 par page) et une **pagination**.
+- **États** : « Aucun résultat » quand un filtre ne renvoie rien, « Aucune annonce » quand la vitrine est vide.
 
 ---
 
-## 6. Recap one-pager
+### 2.3 Vitrine — Fiche annonce
 
-- **Module focus** : promotion / developpement immobilier (PAS gestion locative complete PMP).
-- **13 onglets** : Tableau de bord, Terrains, Projets, Financement, Construction (Phases), Unites, Commercialisation, Livraison, Inspections, Paiements, Documents, Calculateurs (6 sous-onglets), Fonds Prevoyance (Loi 16).
-- **59 endpoints** total.
-- **5 statuts terrain** : Prospection -> Offre en cours -> Acquis -> En developpement -> Rejete.
-- **5 statuts projet** : Planification -> En cours -> Construction -> Termine -> Annule.
-- **5 statuts phase** : A venir -> En cours -> En retard -> Completee -> Suspendue.
-- **5 statuts inspection** : Planifiee -> En cours -> Reussie / Echouee / A reprendre.
-- **3 statuts unite** : Disponible / Vendu / Loue (vocation mixte possible).
-- **4 conformites** par phase : CNB / CCE / CSST / Municipal (checkbox manuelles).
-- **3 niveaux deficiences** : mineures / majeures / critiques (pas de blocage auto).
-- **Generation auto deblocages** : POST /deblocages/generer-auto repartit le montant total.
-- **6 calculateurs** : Mensualite / Amortissement / Interets intercalaires / Prime SCHL / ROI / Cout total.
-- **4 endpoints IA** : analyser projet / chat / rapport financement / optimiser financement (Claude Sonnet 4.6, deduit credits).
-- **Pas de PMP complet** : pas de portail locataire, pas d auto-paiements loyer, pas d indexation, pas de demandes maintenance.
-- **Pas d integration Centris** ni portail web public d annonces.
-- **Pas de Cap Rate / DSCR / Cash-on-Cash** (seulement ROI simple).
-- **Pas d ecritures journal auto** vers Comptabilite.
-- **Pas de lien** avec Module 1 Projets (entites distinctes).
-- **Pas de calendrier auto** sur expirations baux / mortgages.
+- Lien de retour « Retour aux annonces ».
+- **Galerie** : une grande photo, plus des vignettes cliquables s'il y a plusieurs photos ; une icône si l'annonce n'a aucune photo.
+- **Carte « Description »** : le texte de l'annonce, ou « Aucune description fournie ».
+- **Carte latérale** : le titre et son badge de statut, l'adresse, le **prix** (ou « Prix sur demande »), les icônes chambres / salles de bains / superficie, et surtout les moyens de contact :
+  - Bouton **« Demander des informations »** : ouvre le logiciel de courriel vers l'adresse du promoteur (repli sur `info@constructoai.ca` si aucune adresse n'est renseignée).
+  - Bouton **téléphone** (affiché seulement si un numéro est renseigné).
+- **Carte « Caractéristiques »** : Type, Superficie, Chambres, Salles de bain, Code postal, Promoteur, **Publiée le**.
+- **État** : « Annonce introuvable » si l'annonce n'existe pas ou n'est plus active.
+
+> **À savoir (vie privée)** : la fiche publique affiche le **courriel** et le **téléphone du promoteur** en clair. C'est un choix assumé pour permettre le contact direct ; ne renseignez que des coordonnées que vous acceptez de rendre publiques.
 
 ---
 
-**Documentation generee a partir du code** : `immobilier.py` (5248 lignes), `ImmobilierPage.tsx` (13 onglets), `immobilier.ts`.
+### 2.4 Espace promoteur — Connexion
 
-**Manuels lies** :
-- Module 1 (Projets — distinct du suivi promotion) — `01-projets.md`
-- Module 7 (Comptabilite — ecritures manuelles) — `07-factures.md`
-- Module 8 (Dossiers — pour upload reel de fichiers) — `08-dossiers.md`
-- Module 25 (IA — credits IA) — `12-ia.md`
-- Module 28 (Administration — Loi 16 details) — `14-administration.md`
+Titre « Espace promoteur ».
+
+| Champ | Description |
+|-------|-------------|
+| Courriel de l'entreprise | Le même que pour l'ERP |
+| Mot de passe | Le même que pour l'ERP |
+
+- Bouton **Se connecter**. Note affichée : « Même identifiants que votre ERP Constructo AI ».
+- Lien « Créer un compte Constructo AI » (mène à l'inscription de l'ERP).
+- **Fonctionnement** : la connexion se fait en deux temps contre l'ERP (identification de l'entreprise, puis de l'utilisateur). Le jeton obtenu est réutilisé pour tous les appels de l'espace promoteur — c'est une véritable authentification unique (SSO) avec l'ERP.
+
+---
+
+### 2.5 Espace promoteur — Mes annonces
+
+Écran central du promoteur : c'est ici que l'on **publie** et que l'on **gère les photos**.
+
+- **En-tête** : titre « Mes annonces », l'adresse courriel du promoteur et le compte « N annonce(s) publiée(s) ».
+- **Boutons** : **Nouveau projet**, **Gestion Immobilier**, **Voir la vitrine**.
+- **Liste** : une carte par unité du tenant, avec :
+  - le nom du projet et le numéro de l'unité ;
+  - un badge **Publiée** (vert) ou **Non publiée** (gris) ;
+  - une ligne type / superficie / prix ;
+  - un bouton **Photos** ;
+  - un bouton **Publier** (si non publiée) ou **Retirer** (si publiée).
+- **État vide** : « Aucune unité à publier » avec un appel à l'action « Créer un projet ».
+- **Comportements** :
+  - À la publication, le **courriel de contact de l'annonce est pré-rempli** avec celui du promoteur connecté.
+  - En mode consultation (abonnement inactif), publier ou retirer renvoie une erreur affichée : « Mode consultation : abonnement inactif ».
+
+**Fenêtre « Photos de l'annonce »** (bouton Photos)
+
+- **Jusqu'à 12 photos** ; la **première est la couverture**.
+- **Formats** acceptés : PNG, JPG, WEBP, GIF. **Limites** : 10 Mo par photo, 60 Mo cumulés.
+- **Compression automatique côté navigateur** : les grandes images sont réduites (côté le plus long ramené à 1920 px, converties en JPEG) avant l'envoi, pour rester sous les limites.
+- **Ajout** : zone de **glisser-déposer** ou bouton **Ajouter des photos**.
+- **Par vignette** : **Définir comme couverture** (icône étoile), **Retirer** (X), et **réordonnancement par glisser**. La couverture porte un badge « Couverture ».
+- **Boutons** : **Annuler** et, selon l'état, **Enregistrer** (si l'unité est déjà publiée) ou **Enregistrer et publier** (avec la note « Enregistrer publiera aussi cette unité sur la vitrine »).
+
+> **À savoir** : les photos et les coordonnées définies manuellement sur une annonce sont **préservées** si vous republiez l'unité depuis l'ERP sans les redéfinir (voir §5, préservation par COALESCE). En revanche, le **prix, le statut, la superficie, le type et l'adresse** sont **rafraîchis** à partir de la fiche de l'unité à chaque publication.
+
+---
+
+### 2.6 Espace promoteur — Nouveau projet (assistant de démarrage)
+
+Un seul formulaire qui, en un envoi, crée un terrain, puis un projet, puis autant d'unités que vous en ajoutez. C'est la voie rapide vers la publication.
+
+**Section 1 — « Votre projet »**
+
+| Champ | Obligatoire | Détails |
+|-------|:-----------:|---------|
+| Nom du projet | Oui | Exemple d'indication : « Le Griffin - phase 2 » |
+| Type de projet | — | Residentiel, Commercial, Mixte |
+| Adresse | Oui | Exemple : « 1200 rue Ottawa » |
+| Ville | Oui | — |
+| Code postal | — | — |
+| Description | — | Zone de texte |
+
+> L'adresse et la ville servent à **localiser les annonces** : elles sont portées par le terrain que l'assistant crée.
+
+**Section 2 — « Vos unités »** (lignes répétables)
+
+| Champ | Détails |
+|-------|---------|
+| Numéro | Identifiant de l'unité |
+| Type | Condo, Appartement, Maison, Penthouse |
+| Superficie (m²) | — |
+| Chambres | — |
+| Salles de bain | — |
+| Prix de vente | — |
+
+- Boutons **Ajouter une unité** et **Retirer**.
+- Bouton **Créer le projet** → écran de succès « Projet créé ! » (« N unité(s) ajoutée(s) ») avec les boutons **Publier mes unités** et **Créer un autre projet**.
+- **Validations** : le nom est requis, l'adresse et la ville sont requises, et il faut au moins une unité.
+
+> **Nuance à connaître** : cet assistant utilise des listes de types **différentes** de celles de la gestion détaillée (voir §4.3). Ici « Type de projet » propose Residentiel / Commercial / Mixte ; dans la fenêtre Projets de la gestion détaillée, il propose Condos / Locatif / Mixte / Commercial / Maisons.
+
+---
+
+### 2.7 Espace promoteur — Gestion immobilière (14 onglets)
+
+La barre d'onglets affiche l'icône seule et un libellé court sur mobile. Voici les 14 onglets, dans l'ordre.
+
+| # | Onglet | Type | Résumé |
+|---|--------|------|--------|
+| 1 | Tableau de bord | Consultation | Indicateurs + calculateur rapide |
+| 2 | Terrains | CRUD complet | Repérage → acquisition |
+| 3 | Cadastre | Outil | Analyse d'un lot (carte) |
+| 4 | Projets | CRUD complet | Projets de développement |
+| 5 | Financement | CRUD complet | Prêts bancaires |
+| 6 | Construction | CRUD complet | Phases de chantier |
+| 7 | Unités | CRUD complet | Logements / locaux |
+| 8 | Commercialisation | CRUD complet | Stratégie de vente |
+| 9 | Livraison | CRUD complet | Remise aux bénéficiaires |
+| 10 | Inspections | **Lecture seule** | Inspections + conformité |
+| 11 | Paiements | **Lecture seule** | Mouvements financiers |
+| 12 | Documents | Créer + supprimer | Références documentaires |
+| 13 | Calculateurs | Outils | 6 calculs financiers |
+| 14 | Fonds Prévoyance | CRUD + IA | Loi 16 (copropriétés) |
+
+> **Correction majeure par rapport à l'ancien manuel** : le module compte **14 onglets**, pas 13 — l'onglet **Cadastre** a été ajouté. Le commentaire interne du fichier de page annonce d'ailleurs encore « 13 tabs » à tort.
+
+#### 2.7.1 Onglet Tableau de bord
+
+- **Quatre indicateurs clés** : Terrains total, Projets total, Financement approuvé, Unités vendues.
+- **Deux listes** : Terrains par statut, Projets par statut (avec badges colorés).
+- **Calculateur rapide** intégré : Capital / Taux annuel / Durée → Mensualité, Coût total, Intérêts totaux.
+
+#### 2.7.2 Onglet Terrains (CRUD)
+
+- **Barre de commande** : bouton **Nouveau terrain**, recherche, filtre **Statut** (Prospection, Offre en cours, Acquis, En développement, Rejeté).
+- **Table** : Numéro, Adresse, Ville, Superficie, Zonage, Prix demandé, Statut, Actions (modifier / supprimer).
+- **Fenêtre de saisie** : Adresse\*, Ville\*, Code postal, Superficie (m²), **Zonage** (Résidentiel, Commercial, Mixte, Industriel), Propriétaire (nom), Prix demandé ($), Notes.
+
+#### 2.7.3 Onglet Cadastre
+
+Outil d'analyse d'un lot, entièrement côté navigateur (carte OpenStreetMap), sans point d'accès dédié dans le backend Immobilier. Voir le détail en §2.7.15.
+
+#### 2.7.4 Onglet Projets (CRUD)
+
+- **Barre de commande** : bouton **Nouveau projet**, recherche, filtre **Statut** (Planification, En cours, Construction, Terminé, Annulé).
+- **Table** : Numéro, Nom, Type, Logements, Budget, ROI %, Statut, Actions.
+- **Fenêtre de saisie** : Nom du projet\*, **Type de projet** (Condos, Locatif, Mixte, Commercial, Maisons), Nombre de logements, Budget total ($), Coût terrain ($), Coût construction ($), Revenus ventes estimés ($), Date début, Date fin, Description, Notes.
+
+#### 2.7.5 Onglet Financement (CRUD)
+
+- **Filtre** : « Filtrer par projet ».
+- **Table** : Numéro, Banque, Type prêt, Montant demandé, Montant approuvé, Taux %, Statut, Actions.
+- **Fenêtre de saisie** : Projet (menu déroulant), Banque\*, **Type de prêt** (Hypothécaire, Construction, Pont, Marge de crédit), Montant demandé ($), Taux intérêt annuel (%), Durée amortissement (ans), Mise de fonds (%), Notes.
+
+#### 2.7.6 Onglet Construction — phases (CRUD)
+
+- **Prérequis** : un menu **Sélectionner un projet** est obligatoire ; sans projet choisi, un message et une icône invitent à en sélectionner un.
+- **Table** : #, Phase, Statut, **Complétion** (barre de progression), Budget prévu, Coût réel, Retard (jours), Actions.
+- **Fenêtre de saisie** : Nom de la phase\* (choix parmi des phases standards suggérées, ou texte libre), Numéro de phase, **Statut** (À venir, En cours, En retard, Complétée, Suspendue), Complétion (%), Budget prévu ($), Date début prévue, Date fin prévue, Retard (jours), Raison du retard, plus les cases à cocher **Inspection requise**, **Conforme CNB**, **Matériaux commandés**, **Matériaux reçus**, et Notes.
+
+#### 2.7.7 Onglet Unités (CRUD)
+
+- **Prérequis** : sélection d'un projet obligatoire.
+- **Table** : Numéro, Type, Superficie, Chambres, SdB, Étage, Prix vente, Statut, Actions.
+- **Fenêtre de saisie** : Numéro d'unité\*, **Type** (Condo, Appartement, Commerce, Maison, Penthouse), Superficie (m²), Chambres, Salles de bain, Étage, Prix vente ($), Loyer mensuel ($), Notes.
+
+> C'est l'unité créée ici (ou par l'assistant Nouveau projet) qui devient **publiable** dans « Mes annonces ».
+
+#### 2.7.8 Onglet Commercialisation (CRUD)
+
+- **Prérequis** : sélection d'un projet.
+- **Quatre indicateurs** : Unités vendues, Unités louées, Prix moyen vente, Taux de pré-ventes.
+- **Table** : Stratégie, Prix moyen, Loyer moyen, Objectif pré-ventes, Budget marketing, Courtier, Lancement, Actions.
+- **Fenêtre de saisie** : **Stratégie de vente** (Pré-vente, Vente directe, Location, Mixte), Date de lancement, Prix moyen vente ($), Loyer moyen ($), Objectif pré-ventes (%), Budget marketing ($), Site web, Courtier (nom), Commission courtier (%), plus les cases **Brochure prête**, **Plans de vente prêts**, **Maquette 3D**, et Notes.
+
+#### 2.7.9 Onglet Livraison (CRUD)
+
+- **Prérequis** : sélection d'un projet.
+- **Table** : Unité, Bénéficiaire, Type, Date livraison, Clés (badge Oui / Non), Satisfaction (n/10), Réclamations, Actions.
+- **Fenêtre de saisie** : ID Unité, Nom du bénéficiaire, **Type de bénéficiaire** (Acheteur, Locataire), Date de livraison prévue, Durée de garantie (mois), Liste des déficiences ;
+  - groupe **Documents remis** (cases) : Clés remises, Acte de vente signé, Bail signé, Manuel de copropriété, Plans conformes, Certificat de conformité ;
+  - groupe **Garanties** (cases) : Inspection pré-livraison, Déficiences corrigées, Garantie légale (vice caché), Garantie GCR ;
+  - Note de satisfaction (1 à 10), Commentaires du client, Notes.
+
+#### 2.7.10 Onglet Inspections (LECTURE SEULE)
+
+- **Prérequis** : sélection d'un projet.
+- **Table** : Type, Catégorie, Inspecteur, **Score** (barre colorée), Déficiences, Statut, **Conformité** (badges CNB / CCE / CSST), Date.
+- **Aucun bouton** de création, de modification ou de suppression : cet onglet est **consultatif**.
+
+#### 2.7.11 Onglet Paiements (LECTURE SEULE)
+
+- **Prérequis** : sélection d'un projet.
+- **Table** : Type, Catégorie, Montant, Bénéficiaire, Description, Date, Statut.
+- **Aucun bouton d'action** : cet onglet est **consultatif**.
+
+#### 2.7.12 Onglet Documents (créer + supprimer)
+
+- **Prérequis / filtres** : sélection d'un projet + filtre **Catégorie**.
+- **Table** : Nom, Catégorie, Type de fichier, Date du document, **Confidentiel** (badge rouge), Statut, Actions (supprimer).
+- **Fenêtre « Nouveau document »** : Nom du document\*, **Catégorie** (Contrats, Permis, Plans et dessins, Études techniques, Financement, Assurances, Correspondance, Rapports d'inspection, Photos, Autre), **Type de fichier** (PDF, Image, Word, Excel, CAD, Autre), **Chemin du fichier** (texte), Description, Date du document, Date d'expiration, **Confidentiel** (case).
+
+> **Limite importante** : cet onglet **n'héberge pas** de fichiers. Le champ « Chemin du fichier » n'est qu'une référence textuelle (par exemple un lien vers un dossier existant). Pour joindre un vrai fichier, utilisez le module Dossiers de l'ERP, puis collez ici le lien.
+
+#### 2.7.13 Onglet Calculateurs (6 sous-onglets)
+
+Tous les calculs se font côté serveur ; rien n'est enregistré (chaque calcul est ponctuel).
+
+| Sous-onglet | Entrées | Sorties |
+|-------------|---------|---------|
+| **Mensualité** | Capital ($), Taux annuel (%), Durée (années) | Mensualité, Coût total du crédit, Intérêts totaux |
+| **Amortissement** | + **Fréquence** (Mensuel, Bi-hebdomadaire, Hebdomadaire) | Résumé (mensualité, total des intérêts, coût total) + table (Période, Paiement, Capital, Intérêt, Solde) — 24 premières lignes |
+| **Intérêts intercalaires** | Montant emprunté, Taux annuel, Durée de construction (mois) | Total des intérêts + table mois par mois (Déblocage, Solde cumulé, Intérêt) |
+| **Prime SCHL** | Montant du prêt, Valeur de la propriété | Ratio prêt-valeur, Prime %, Prime en $, Prêt total ; + Taxe sur la prime (Québec 9 %) ; avertissement « non assurable » si le ratio dépasse 95 % |
+| **ROI** | Investissement total, Revenus annuels, Dépenses annuelles, Durée | ROI, Bénéfice net annuel, Période de récupération |
+| **Coût total** | Capital, Taux annuel, Durée | Mensualité, Coût total, Intérêts totaux, Capital |
+
+Voir §4.4 pour les formules exactes (capitalisation semestrielle, barème SCHL).
+
+#### 2.7.14 Onglet Fonds Prévoyance (Loi 16)
+
+Voir la section détaillée §2.7.16.
+
+#### 2.7.15 Cadastre — analyse de terrain (détail)
+
+- **Recherche** par **adresse civique** ou **numéro de lot** → liste de candidats (numéro de lot, municipalité, superficie).
+- **Fiche du lot** :
+  - **Identité du lot** : numéro de lot, municipalité, superficie, valeur foncière, code CUBF ;
+  - **Carte** interactive (OpenStreetMap, tracé du polygone) ;
+  - **Faisabilité (zonage)** : code de zone, usages permis ;
+  - **Contraintes** : présentes ou absentes, avec un pourcentage ;
+  - **Proximité**, **Accès et logistique**, **Avertissements**.
+- Bouton **« Rattacher à un projet »** pour relier l'analyse à un projet existant.
+
+> **À savoir** : le cadastre s'appuie sur des données ouvertes et sert d'aide à la décision. Il **ne remplace pas** un certificat de localisation ni une vérification municipale officielle du zonage.
+
+#### 2.7.16 Fonds de prévoyance — Loi 16
+
+Bandeau de rappel : « Fonds de Prévoyance (Loi 16 du Québec) — Étude obligatoire tous les 5 ans · Carnet d'entretien obligatoire · Période minimale 25 ans ». Un **sélecteur de copropriété** partagé s'applique à tous les sous-onglets. Sept sous-onglets :
+
+**a) Copropriétés** (CRUD)
+- Colonnes : Nom, Adresse, Année, Unités, Valeur de reconstruction, Composantes, Études.
+- La fenêtre de saisie propose un bouton **« Calculer automatiquement (Québec 2025) »** la valeur de reconstruction (voir §4.5).
+
+**b) Composantes** (inventaire du bâtiment)
+- Colonnes : Sous-catégorie, Description, Quantité, État, Vie restante, Coût total.
+- Des **alertes** signalent l'urgence : CRITIQUE, URGENT, AVERTISSEMENT, OK.
+
+**c) Études**
+- Colonnes : Date, Professionnel, Ordre, Fonds actuel, Recommandé, Contribution annuelle, Conforme.
+- Champs d'hypothèses : taux d'inflation, taux de rendement, contingence.
+
+**d) Carnet d'entretien**
+- Colonnes : Description, Type, Date prévue, Date réalisée, Coût prévu, Coût réel, Entrepreneur.
+
+**e) Projections**
+- Bouton **« Générer les 3 scénarios »** (Uniforme, Progressif, Variable).
+- **Graphique** d'évolution du solde du fonds.
+- Bouton **« Enregistrer le scénario sélectionné »**.
+- Table année par année, avec un **avertissement de découvert** si le fonds devient négatif une année donnée.
+
+**f) Attestations** (art. 1069 C.c.Q. — vente d'une unité)
+- Colonnes : Unité, Vendeur, Acheteur, Date de la demande, Date d'émission, Fonds, Arriérés, Statut.
+
+**g) Conseils IA** (4 sous-onglets)
+- **Analyse complète** : score de santé, niveau de risque, points d'attention, recommandations, conformité Loi 16, conseil d'expert.
+- **Chat expert** : posez une question, avec une case « Inclure le contexte de la copropriété ».
+- **Rapport complet** : bouton **Générer**, puis **Télécharger (.md)** — c'est la **seule exportation** de fichier de tout le module.
+- **Suggestion de contribution** : à partir du coût de remplacement, du nombre d'unités, de l'horizon et du solde actuel → propose une contribution uniforme, une contribution par unité et par mois, et une contribution progressive par phase.
+
+---
+
+### 2.8 Assistant IA Immobilier
+
+- **Bouton flottant « Assistant IA »**, en bas à droite, **visible uniquement pour le promoteur connecté** — jamais sur la vitrine publique. Il ouvre un panneau latéral coulissant.
+- **Titre** : « Assistant Immobilier — Expert IA : terrains, projets, unités, financement ».
+- **En-tête du panneau** : **Nouvelle conversation**, **Historique**, Fermer.
+- **Chat** : bulles utilisateur / assistant (texte enrichi Markdown), 3 exemples de départ pour amorcer.
+- **Principe « proposer → confirmer »** : l'IA ne modifie jamais vos données directement. Elle affiche une **carte de proposition** (aperçu champ par champ) que vous validez avec **Confirmer** ou rejetez avec **Annuler**.
+- **Six types d'actions confirmables** : créer un **terrain**, un **projet**, une **unité**, un **financement** ; effectuer un **changement de statut** ; **publier une annonce**. Ce dernier cas est traité à part : il affiche un avertissement (« publier rend cette annonce visible au public… immédiatement ») et un bouton **Publier** de couleur ambre.
+- **Historique** : la liste des conversations est **conservée côté serveur** ; vous pouvez reprendre ou supprimer une conversation.
+
+> **À savoir** : l'assistant ne s'exécute qu'après votre confirmation, et il n'agit **que sur votre tenant** — il ne peut pas cibler une autre entreprise. La recherche interne qu'il utilise est cloisonnée et protégée contre l'accès aux tables sensibles (employés, paie, utilisateurs, etc.).
+
+---
+
+## 3. Workflows pas à pas
+
+### 3.1 Visiteur : de la recherche au contact
+
+1. Ouvrez `app.constructoai.ca/immo` (Accueil).
+2. Saisissez une ville ou un type dans la barre de recherche, puis **Rechercher** (ou allez dans **Annonces**).
+3. Affinez avec la **recherche avancée** (prix, superficie, chambres, statut) et un **tri**.
+4. Cliquez une carte pour ouvrir la **fiche**.
+5. Parcourez la galerie et les caractéristiques.
+6. Cliquez **« Demander des informations »** (ouvre un courriel vers le promoteur) ou utilisez le **bouton téléphone**.
+
+### 3.2 Promoteur : publier rapidement (voie express)
+
+1. **Connexion** à l'espace promoteur (identifiants ERP).
+2. **Nouveau projet** : remplissez la section « Votre projet » (nom, adresse, ville) et ajoutez une ou plusieurs unités (numéro, type, superficie, chambres, salles de bain, prix).
+3. **Créer le projet** → écran de succès.
+4. Cliquez **Publier mes unités** (ou allez dans **Mes annonces**).
+5. Pour chaque unité, cliquez **Photos**, ajoutez jusqu'à 12 images (glisser-déposer), choisissez la **couverture**, réordonnez au besoin, puis **Enregistrer et publier**.
+6. Vérifiez le résultat avec **Voir la vitrine**.
+
+### 3.3 Publier, retirer et gérer les photos d'une unité existante
+
+1. **Mes annonces** : repérez l'unité (badge Publiée / Non publiée).
+2. **Publier** : rend l'annonce visible (le courriel de contact est pré-rempli avec le vôtre).
+3. **Photos** : gérez la galerie à tout moment ; « Définir comme couverture » (étoile), « Retirer » (X), glisser pour réordonner.
+4. **Retirer** : masque l'annonce de la vitrine **sans supprimer** ses données ni ses photos (vous pourrez republier plus tard avec la même galerie).
+5. Si un message « Mode consultation : abonnement inactif » apparaît, réactivez l'abonnement de l'entreprise (voir §5.2).
+
+### 3.4 Promoteur : gestion fine d'un projet (cycle complet)
+
+1. **Terrains** → Nouveau terrain (adresse, ville, superficie, zonage). Faites évoluer le **statut** : Prospection → Offre en cours → Acquis → En développement.
+2. (Optionnel) **Cadastre** → analysez le lot, puis **Rattacher à un projet**.
+3. **Projets** → Nouveau projet (type, logements, budgets, revenus estimés, dates).
+4. **Financement** → Nouveau financement (banque, type de prêt, montant demandé, taux, durée) ; passez le montant approuvé une fois l'accord obtenu.
+5. **Déblocages** → générez-les automatiquement (voir §3.5).
+6. **Construction** → sélectionnez le projet, créez les **phases** (statut, complétion, budget prévu, cases de conformité et de matériaux).
+7. **Unités** → sélectionnez le projet, créez chaque unité (type, superficie, chambres, prix).
+8. **Commercialisation** → définissez la stratégie, l'objectif de pré-ventes, le courtier, le budget marketing.
+9. **Livraison** → à la remise, saisissez le bénéficiaire, cochez les documents remis et les garanties, notez la satisfaction.
+10. **Inspections** et **Paiements** → consultez l'avancement (lecture seule).
+
+### 3.5 Générer automatiquement les déblocages d'un financement
+
+1. Assurez-vous que le financement porte un **montant approuvé (engagement)**.
+2. Lancez la génération automatique (bouton dédié ou l'assistant IA).
+3. Le système crée **7 étapes** de déblocage, réparties selon l'avancement typique d'un chantier : **10 %, 15 %, 25 %, 15 %, 20 %, 10 %, 5 %** (total 100 %).
+4. **Garde-fous** : l'opération est **atomique** et **idempotente** — si des déblocages existent déjà, elle est refusée (409) pour éviter les doublons ; si le total dépassait l'engagement, elle est refusée (400) ; la dernière étape absorbe l'arrondi pour que la somme tombe juste.
+5. Suivez ensuite chaque déblocage individuellement.
+
+### 3.6 Fonds de prévoyance Loi 16 : de la copropriété à la projection
+
+1. Onglet **Fonds Prévoyance** → sous-onglet **Copropriétés** → créez la copropriété (nom, adresse, année, unités). Utilisez **« Calculer automatiquement (Québec 2025) »** pour la valeur de reconstruction.
+2. Sous-onglet **Composantes** → inventoriez toits, ascenseurs, fenêtres, etc. (quantité, coût unitaire, état, vie restante). Le coût total et la vie restante peuvent être calculés automatiquement.
+3. Sous-onglet **Études** → créez une étude du fonds (professionnel, ordre, hypothèses d'inflation, de rendement et de contingence).
+4. Sous-onglet **Projections** → **Générer les 3 scénarios** (Uniforme, Progressif, Variable), examinez le graphique et le tableau année par année, surveillez tout **avertissement de découvert**, puis **Enregistrer le scénario sélectionné**.
+5. Sous-onglet **Carnet d'entretien** → planifiez et suivez les travaux (dates prévues / réalisées, coûts, entrepreneur).
+6. Sous-onglet **Attestations** → à la vente d'une unité, émettez l'attestation (art. 1069 C.c.Q.) avec l'état du fonds et les arriérés.
+7. Sous-onglet **Conseils IA** → lancez une **Analyse complète**, discutez avec l'**expert**, ou générez un **Rapport complet** (téléchargeable en `.md`).
+
+### 3.7 Utiliser les calculateurs financiers
+
+1. Onglet **Calculateurs** → choisissez le sous-onglet voulu.
+2. **Mensualité / Coût total** : Capital, Taux annuel, Durée → mensualité et intérêts. La formule utilise la **capitalisation semestrielle** canadienne (voir §4.4).
+3. **Amortissement** : ajoutez la **Fréquence** (mensuel, bi-hebdomadaire, hebdomadaire) pour obtenir le tableau détaillé.
+4. **Intérêts intercalaires** : Montant, Taux, Durée de construction → intérêts à capitaliser pendant les travaux.
+5. **Prime SCHL** : Montant du prêt, Valeur de la propriété → ratio, prime, taxe québécoise de 9 % ; au-delà de 95 %, le prêt est **non assurable**.
+6. **ROI** : Investissement, Revenus, Dépenses, Durée → rendement et période de récupération.
+
+> Les calculateurs **n'enregistrent rien**. Pour conserver un résultat, recopiez-le dans les notes d'un financement ou dans un document du projet.
+
+### 3.8 Analyser un lot au cadastre et le rattacher
+
+1. Onglet **Cadastre** → saisissez une adresse civique ou un numéro de lot → **Rechercher**.
+2. Choisissez un candidat dans la liste.
+3. Examinez l'**identité du lot**, la **carte**, la **faisabilité (zonage)**, les **contraintes**, la **proximité** et les **avertissements**.
+4. Cliquez **« Rattacher à un projet »** pour relier l'analyse.
+
+### 3.9 Piloter par l'assistant IA (proposer → confirmer)
+
+1. Ouvrez l'**Assistant IA** (bouton flottant, promoteur connecté).
+2. Formulez votre demande en langage naturel — par exemple « combien d'unités invendues ? » ou « crée un terrain à Granby ».
+3. Pour une **lecture** (tableau de bord, recherche), la réponse s'affiche directement.
+4. Pour une **action** (créer, changer un statut, publier), l'IA présente une **carte de proposition** : vérifiez l'aperçu, puis **Confirmer** ou **Annuler**.
+5. Pour une **publication**, lisez l'avertissement (visibilité publique immédiate) avant de cliquer **Publier**.
+6. Reprenez une discussion antérieure via **Historique**, ou repartez à neuf avec **Nouvelle conversation**.
+
+---
+
+## 4. Référence
+
+### 4.1 Points d'accès par backend
+
+**a) Espace promoteur — `routers/immobilier.py` (`/api/erp/v1/immobilier`, ≈ 61 points d'accès, authentification ERP)**
+
+| Entité | Points d'accès |
+|--------|----------------|
+| Tableau de bord | `GET /dashboard` |
+| Terrains | `GET /terrains`, `GET /terrains/{id}`, `POST`, `PUT`, `DELETE` |
+| Projets | `GET /projets`, `GET /projets/{id}`, `POST`, `PUT`, `DELETE` |
+| Financements | `GET /financements`, `GET /{id}`, `POST`, `PUT`, `DELETE` |
+| Unités | `GET /unites` (**`projet_id` obligatoire**), `POST`, `PUT`, `DELETE` |
+| Inspections | `GET /inspections`, `POST`, `PUT` (pas de suppression) |
+| Paiements | `GET /paiements`, `POST` (pas de modification ni suppression) |
+| Déblocages | `GET`, `GET /{id}`, `POST`, `PUT`, `DELETE`, `POST /deblocages/generer-auto` |
+| Phases | `GET`, `GET /phases/types`, `GET /{id}`, `POST`, `PUT`, `DELETE` |
+| Commercialisation | `GET`, `GET /{id}`, `POST`, `PUT`, `DELETE` |
+| Livraisons | `GET`, `GET /{id}`, `POST`, `PUT`, `DELETE` |
+| Documents | `GET`, `GET /{id}`, `POST`, `DELETE` |
+| Calculateurs | `POST /calculer-mensualite`, `/calculer-amortissement`, `/calculer-interets-intercalaires`, `/calculer-prime-schl`, `/calculer-roi`, `/calculer-cout-total` |
+| IA | `POST /ia/analyser-projet` (Opus), `/ia/chat`, `/ia/rapport-financement`, `/ia/optimiser-financement` (Sonnet) |
+
+**b) Assistant IA — `routers/immo_ai.py` (`/api/erp/v1/immo/ai`, 5 points d'accès, 9 outils)**
+
+| Point d'accès | Rôle |
+|---------------|------|
+| `POST /chat` | Conversation (boucle d'outils, historique persisté) |
+| `POST /confirm-action` | Exécute une proposition **après confirmation** (revalidée entièrement côté serveur) |
+| `GET /conversations` | Liste des conversations |
+| `GET /conversations/{id}` | Détail (404 si elle n'est pas à l'utilisateur) |
+| `DELETE /conversations/{id}` | Suppression |
+
+Les 9 outils : `recherche_bd` (lecture SQL restreinte), `tableau_de_bord_immo`, `calculer_financier_immo`, `proposer_terrain`, `proposer_projet`, `proposer_unite`, `proposer_financement`, `proposer_changement_statut`, `proposer_publication_annonce`.
+
+> **Nuance** : la mémoire produit parlait de « 9 outils » ; côté interface, seuls **6 types d'actions** sont *confirmables* (terrain, projet, unité, financement, changement de statut, publication). Les trois autres outils sont des lectures qui ne demandent pas de confirmation.
+
+**c) Fonds de prévoyance — `routers/fonds_prevoyance.py` (`/api/erp/v1/fonds-prevoyance`, ≈ 31 points d'accès, authentification ERP)**
+
+| Entité | Points d'accès |
+|--------|----------------|
+| Référence | `GET /reference` |
+| Copropriétés | `GET`, `GET /{id}`, `POST`, `PUT`, `DELETE`, `GET /{id}/statistiques` |
+| Composantes | `GET /coproprietes/{id}/composantes`, `POST`, `PUT`, `DELETE` |
+| Études | `GET /coproprietes/{id}/etudes`, `GET /etudes/{id}`, `POST`, `PUT`, `DELETE` |
+| Projections | `POST /etudes/{id}/generer-projections`, `GET /etudes/{id}/projections` |
+| Carnet d'entretien | `GET /coproprietes/{id}/entretiens`, `POST`, `PUT`, `DELETE` |
+| Attestations | `GET /coproprietes/{id}/attestations`, `POST`, `PUT`, `DELETE` |
+| IA | `POST /ia/analyze-copropriete` (Opus), `/ia/chat`, `/ia/suggest-contribution`, `/ia/rapport-recommandations` (Sonnet) |
+| Calcul | `POST /calculer-valeur-reconstruction` |
+
+**d) Vitrine publique — `IMMO_REACT/backend/routers/public.py` (`/api/immo/v1/public`, 4 points d'accès, SANS authentification)**
+
+| Point d'accès | Rôle |
+|---------------|------|
+| `GET /listings` | Recherche avancée (ville, type, prix, superficie, chambres, salles de bains, statut, tri, texte ; 100 max par page) |
+| `GET /filters` | Villes et valeurs disponibles pour les menus |
+| `GET /stats` | Indicateurs de l'Accueil |
+| `GET /listings/{id}` | Fiche (404 si l'annonce est inactive) |
+
+**e) Publication — `IMMO_REACT/backend/routers/publish.py` (`/api/immo/v1/promoteur`, 5 points d'accès, authentification promoteur)**
+
+| Point d'accès | Rôle |
+|---------------|------|
+| `GET /me` | Profil promoteur |
+| `GET /units` | Unités du tenant + état de publication |
+| `GET /units/{id}/photos` | Lecture des photos |
+| `POST /units/{id}/publish` | Publier (valide les photos, refusé 403 en mode consultation) |
+| `POST /units/{id}/unpublish` | Retirer de la vitrine |
+
+### 4.2 Statuts par entité
+
+| Entité | Statuts |
+|--------|---------|
+| Terrain | Prospection, Offre en cours, Acquis, En développement, Rejeté |
+| Projet | Planification, En cours, Construction, Terminé, Annulé |
+| Phase de construction | À venir, En cours, En retard, Complétée, Suspendue |
+| Unité / Annonce | Disponible, Réservé, Vendu |
+| Bénéficiaire (livraison) | Acheteur, Locataire |
+
+> Les statuts d'annonce sont normalisés côté serveur en `disponible` / `reserve` / `vendu` (jamais d'autre valeur acceptée à la publication).
+
+### 4.3 Taxonomies (types)
+
+| Champ | Valeurs |
+|-------|---------|
+| Zonage (terrain) | Résidentiel, Commercial, Mixte, Industriel |
+| Type de projet (gestion détaillée) | Condos, Locatif, Mixte, Commercial, Maisons |
+| Type de projet (assistant Nouveau projet) | Residentiel, Commercial, Mixte |
+| Type de prêt | Hypothécaire, Construction, Pont, Marge de crédit |
+| Type d'unité (gestion détaillée) | Condo, Appartement, Commerce, Maison, Penthouse |
+| Type d'unité (assistant Nouveau projet) | Condo, Appartement, Maison, Penthouse |
+| Type de propriété (recherche vitrine) | Condo, Appartement, Maison, Commerce, Penthouse, Autre |
+| Catégorie de document | Contrats, Permis, Plans et dessins, Études techniques, Financement, Assurances, Correspondance, Rapports d'inspection, Photos, Autre |
+| Stratégie de vente | Pré-vente, Vente directe, Location, Mixte |
+
+> **Deux listes de types coexistent** (assistant Nouveau projet par rapport à la gestion détaillée) : c'est une réalité du code, pas une erreur de saisie. Choisissez la valeur qui a du sens ; elle reste modifiable ensuite dans l'onglet correspondant.
+
+### 4.4 Calculs financiers (formules réelles)
+
+- **Taux périodique (hypothèque canadienne)** : capitalisation **semestrielle**, donc le taux par période vaut `(1 + i/2)^(2/p) − 1` (et non `i/p`), où `i` est le taux annuel et `p` le nombre de périodes par an. C'est la convention légale au Canada.
+- **Mensualité** : `M = P · [ r (1+r)^n ] / [ (1+r)^n − 1 ]`, avec `r` le taux périodique et `n` le nombre de versements. La dernière période absorbe le résidu d'arrondi.
+- **Fréquences d'amortissement** : Mensuel = 12 versements/an, Bi-hebdomadaire = 26, Hebdomadaire = 52.
+- **Intérêts intercalaires** : déblocage supposé **linéaire** (`montant / durée en mois`), intérêt mensuel `(taux/100)/12` appliqué sur le solde cumulé.
+- **ROI** : `(bénéfice net annuel × durée / investissement) × 100`. Période de récupération = `investissement / bénéfice net annuel` (non définie si le bénéfice est nul ou négatif).
+- **Prime SCHL** (selon le ratio prêt-valeur, RPV) :
+
+| RPV | Prime | Remarque |
+|-----|-------|----------|
+| > 95 % | — | **Non assurable** |
+| 90,01 % à 95 % | 4,00 % | — |
+| 85,01 % à 90 % | 3,10 % | — |
+| 80,01 % à 85 % | 2,80 % | — |
+| ≤ 80 % | 0 % | Prêt conventionnel (pas de prime) |
+
+  La **taxe québécoise de 9 %** sur la prime est payable **comptant** (elle ne s'ajoute pas au prêt).
+
+- **Déblocages automatiques** : 7 étapes de **10 / 15 / 25 / 15 / 20 / 10 / 5 %** (= 100 %).
+
+### 4.5 Fonds de prévoyance — barèmes Loi 16
+
+- **Valeur de reconstruction (Québec 2025)** : taux au pied carré × facteur de type × facteur d'âge.
+
+| Qualité | $/pi² | | Type | Facteur | | Âge du bâtiment | Facteur |
+|---------|------:|---|------|--------:|---|-----------------|--------:|
+| Économique | 250 | | Résidentiel | 1,00 | | > 50 ans | 0,85 |
+| Base | 325 | | Commercial | 1,15 | | … | … |
+| Moyenne | 387 | | Mixte | 1,08 | | ≤ 15 ans | 1,00 |
+| Haut de gamme | 487 | | Industriel | 0,95 | | | |
+
+- **Facteurs d'état d'une composante** (influencent la vie restante) : Excellent 1,10 · Bon 1,00 · Moyen 0,85 · Mauvais 0,70 · **Critique 0,00** (vie restante nulle → remplacement immédiat).
+- **Période de projection** : 25 ans par défaut (minimum légal), configurable de 1 à 100 ans.
+- **Trois scénarios de contribution** :
+  - **Uniforme** : cotisation annuelle constante calculée par annuité (valeur actuelle nette des dépenses futures).
+  - **Progressif** : cotisation qui augmente de 3 %/an, ajustée par un solveur pour équilibrer le fonds.
+  - **Variable** : cotisation qui vise, chaque année, une réserve d'au moins la prochaine grosse dépense majorée de 15 % (avec un plancher de 50 000 $).
+- **Réinflation cyclique** : chaque composante est remplacée à la fin de sa vie restante, puis à chaque cycle de vie théorique ; son coût est **ré-inflaté** à chaque remplacement.
+- **Alerte de découvert intermédiaire** : même si le solde final est positif, le système signale l'année et le montant du **découvert maximal** en cours de route (le solde peut passer sous zéro une année donnée).
+
+### 4.6 Numéros de référence générés
+
+Les entités reçoivent un numéro unique à la création (par exemple `TER-#####` pour un terrain, `IMMO-#####` pour une unité, `DEB-#####` pour un déblocage, `FIN-…` pour un financement). Ces numéros sont générés de façon fiable (jamais par un simple compteur), avec réessai en cas de collision.
+
+### 4.7 Photos d'annonce — limites
+
+| Règle | Valeur |
+|-------|--------|
+| Nombre maximal | 12 photos (la 1re = couverture) |
+| Formats acceptés | PNG, JPG, WEBP, GIF (et liens `https://`) |
+| Format refusé | SVG (protection contre les scripts malveillants) |
+| Taille par photo | ~ 10 Mo |
+| Taille cumulée | 60 Mo |
+| Compression | Automatique côté navigateur (1920 px max, JPEG) |
+
+### 4.8 Bornes et validations utiles
+
+- **Unités** : la liste exige un `projet_id` (on ne liste jamais toutes les unités du tenant d'un coup) ; créer une unité valide l'existence du projet parent (404 sinon).
+- **Calculateurs** : taux plafonné à 100 %, durée à 100 ans, durée de construction à 600 mois (protections anti-débordement).
+- **Champs de date vides** : convertis automatiquement en « vide » pour éviter les erreurs de base de données.
+- **Suppressions en cascade** : supprimer un **projet** retire ses entités liées (financements, unités, phases, etc.) **et désactive ses annonces publiques** ; supprimer une **unité** désactive aussi son annonce (sinon elle resterait affichée à vie) ; supprimer un **terrain** délie les projets qui le référençaient.
+
+---
+
+## 5. Intégrations et FAQ
+
+### 5.1 Authentification unique (SSO) avec l'ERP
+
+L'espace promoteur partage l'authentification de l'ERP : mêmes identifiants, même jeton. Se connecter à l'Immobilier, c'est se connecter à l'entreprise. La déconnexion, ou l'expiration du jeton, ramène à la page de connexion.
+
+### 5.2 Stripe et le mode consultation
+
+L'accès du promoteur dépend de l'état de l'abonnement de l'entreprise (interrogé via l'ERP) :
+
+| Niveau | Condition | Effet |
+|--------|-----------|-------|
+| **Complet** | Abonnement actif, en essai, en annulation, en retard ou impayé | Lecture et écriture |
+| **Consultation** | Sans abonnement Stripe ou abonnement annulé | Lecture seule ; **publier / retirer refusé (403)** |
+| **Bloqué** | Entreprise désactivée | Déconnexion (401) |
+
+En pratique, si vous voyez « Mode consultation : abonnement inactif » en tentant de publier, c'est que l'abonnement de l'entreprise doit être régularisé (module Configuration / abonnement de l'ERP).
+
+### 5.3 Crédits IA
+
+L'assistant Immobilier et les conseils IA du fonds de prévoyance **consomment les crédits IA prépayés** du tenant (les mêmes que le reste de l'ERP), avec une majoration de 30 % sur le coût réel. Un solde épuisé renvoie une erreur 402. Les analyses en profondeur utilisent Claude Opus 4.8 ; les conversations, rapports et suggestions utilisent Claude Sonnet 4.6.
+
+### 5.4 Vitrine publique et vie privée
+
+La vitrine est **ouverte à tous**, sans connexion. Elle n'expose jamais l'identifiant interne du tenant, mais elle affiche **volontairement** le courriel et le téléphone du promoteur sur chaque fiche, pour permettre le contact. Un plafond de requêtes par adresse IP limite la moisson automatisée.
+
+### 5.5 Lien avec les autres modules
+
+- **Module Dossiers de l'ERP** : à utiliser pour héberger de vrais fichiers, puisque l'onglet Documents d'Immobilier ne stocke qu'un chemin texte.
+- **Module Comptabilité** : les paiements de l'onglet Paiements ne sont **pas** comptabilisés automatiquement dans le grand livre. À saisir manuellement au besoin.
+- **Module Projets de l'ERP** : les projets immobiliers (`immo_projets`) sont **distincts** des projets de chantier de l'ERP ; il n'y a pas de lien automatique entre les deux.
+- **Loi 16** : le fonds de prévoyance est un sous-module à part entière, avec ses propres tables et son propre assistant IA.
+
+### 5.6 FAQ
+
+**Q : Où sont passés les onglets Propriétés, Locataires, Baux et Dépenses de l'ancien manuel ?**
+R : Ils n'existent pas ici. L'application Immobilier est un outil de **promotion** et de **vitrine**, pas un gestionnaire locatif. Des libellés de traduction traînent dans les fichiers de langue, mais aucun écran ne les affiche.
+
+**Q : Puis-je créer une inspection ou un paiement depuis l'interface ?**
+R : Non. Les onglets Inspections et Paiements sont en **lecture seule** : ni bouton de création, ni fenêtre de saisie. On peut seulement consulter.
+
+**Q : Comment joindre un vrai PDF à un document de projet ?**
+R : L'onglet Documents ne téléverse pas de fichier ; il ne garde qu'un « Chemin du fichier » (texte). Hébergez le fichier dans le module Dossiers de l'ERP, puis collez son lien dans ce champ. Le **seul** vrai téléversement de l'application est celui des **photos d'annonce**.
+
+**Q : Si je republie une unité depuis l'ERP, est-ce que je perds mes photos et le texte que j'ai peaufinés sur l'annonce ?**
+R : Non pour les photos, le titre, la description et les coordonnées : ils sont **préservés** si vous ne les redéfinissez pas. **Oui** en revanche pour le **prix, le statut, la superficie, le type et l'adresse**, qui sont **rafraîchis** à partir de la fiche de l'unité à chaque publication. Si vous aviez ajusté le prix directement sur l'annonce, il sera écrasé par le prix de vente de l'unité.
+
+**Q : Retirer une annonce supprime-t-il ses photos ?**
+R : Non. « Retirer » masque l'annonce (elle devient inactive) mais conserve toutes ses données et sa galerie. Vous pouvez republier plus tard sans tout refaire.
+
+**Q : L'assistant IA peut-il modifier mes données sans mon accord ?**
+R : Non. Il **propose** une action et attend votre **confirmation**. Il agit uniquement sur votre entreprise, et il est protégé contre l'accès aux données sensibles (paie, employés, utilisateurs).
+
+**Q : Y a-t-il un export PDF ou CSV des annonces, projets ou financements ?**
+R : Non. La **seule** exportation de fichier de tout le module est le **rapport du fonds de prévoyance** en `.md` (onglet Fonds Prévoyance → Conseils IA → Rapport complet).
+
+**Q : Le cadastre remplace-t-il un certificat de localisation ?**
+R : Non. Il donne une lecture indicative (données ouvertes, carte OpenStreetMap) pour aider à évaluer un lot. Validez toujours le zonage et les contraintes auprès de la municipalité.
+
+**Q : Les calculateurs enregistrent-ils leurs résultats ?**
+R : Non. Chaque calcul est ponctuel. Recopiez les résultats dans les notes d'un financement ou dans un document si vous voulez les conserver.
+
+**Q : Tout le monde dans l'entreprise peut-il publier sur la vitrine publique ?**
+R : Oui. L'espace promoteur n'impose aucun rôle : tout utilisateur connecté du tenant peut créer, modifier, supprimer et **publier**. Si le contrôle est un enjeu, encadrez cet usage à l'interne.
+
+**Q : Pourquoi ne puis-je pas publier alors que je suis bien connecté ?**
+R : Probablement le **mode consultation** : l'abonnement de l'entreprise est inactif. Le message « Mode consultation : abonnement inactif » l'indique. Régularisez l'abonnement pour réactiver la publication.
+
+**Q : Combien d'unités puis-je créer par projet ?**
+R : Pas de limite fixe. En pratique, la liste des unités exige de choisir un projet, ce qui garde l'affichage gérable même avec beaucoup d'unités.
+
+**Q : Le fonds de prévoyance garantit-il que le fonds ne sera jamais à découvert ?**
+R : Non, et le système est transparent là-dessus : même quand le solde final est positif, il vous signale l'**année et le montant du découvert maximal** en cours de route, pour trois scénarios de cotisation.
+
+---
+
+## 6. Récapitulatif
+
+- **Deux surfaces** : une **vitrine publique** sans connexion (Accueil, Annonces, Fiche) et un **espace promoteur** en SSO ERP.
+- **Route réelle** : `/immo` (application `IMMO_REACT` séparée), pas `/immobilier`.
+- **Cœur du module** : le **flux de publication** — une unité de l'espace promoteur devient une annonce publique (table partagée `public.immo_listings`) depuis « Mes annonces ».
+- **Voie express** : l'assistant « Nouveau projet » crée terrain + projet + unités en un envoi, puis « Publier mes unités ».
+- **Photos d'annonce** : jusqu'à 12, glisser-déposer, réordonnancement, couverture, compression automatique — le **seul** vrai téléversement de fichiers.
+- **Gestion détaillée : 14 onglets** (dont **Cadastre**, ajouté) — Tableau de bord, Terrains, Cadastre, Projets, Financement, Construction, Unités, Commercialisation, Livraison, Inspections, Paiements, Documents, Calculateurs, Fonds Prévoyance.
+- **Inspections et Paiements = lecture seule** ; **Documents = chemin texte** (pas de vrai fichier) ; création et suppression seulement.
+- **Six calculateurs** avec la **capitalisation semestrielle** canadienne et le barème **SCHL** (non assurable > 95 %, taxe québécoise de 9 %).
+- **Déblocages automatiques** : 7 étapes (10/15/25/15/20/10/5 %), atomiques et sans doublon.
+- **Fonds de prévoyance Loi 16** : copropriétés, composantes, études, carnet, **projections 25 ans à 3 scénarios**, attestations (art. 1069 C.c.Q.), conseils IA + **rapport `.md`** (seule exportation).
+- **Cadastre** : recherche d'un lot, carte OpenStreetMap, faisabilité, contraintes, rattachement à un projet (données indicatives).
+- **Assistant IA** (promoteur seulement) : **propose → confirme**, six actions confirmables dont la publication, historique conservé.
+- **Modèles IA** : Opus 4.8 (analyses), Sonnet 4.6 (chat, rapports, suggestions), facturés aux crédits prépayés (+30 %).
+- **Permissions** : aucun rôle dédié — tout utilisateur du tenant peut tout faire, y compris publier ; **mode consultation** (abonnement inactif) bloque la publication (403).
+- **Ce que le module ne fait pas** : pas de gestion locative, pas de Centris, pas d'exports (sauf le `.md` Loi 16), pas de comptabilisation automatique, superficies en m².
+
+---
+
+**Documentation générée à partir du code** (7 juillet 2026) :
+- `IMMO_REACT/frontend` (application React, base `/immo`) — pages Accueil, Annonces, Fiche, Connexion, Mes annonces, Nouveau projet, Gestion immobilière (14 onglets), Cadastre, panneau Assistant IA.
+- `ERP_REACT/backend/routers/immobilier.py` (espace promoteur, ≈ 61 points d'accès), `routers/immo_ai.py` (assistant IA, 5 points d'accès, 9 outils), `routers/fonds_prevoyance.py` (Loi 16, ≈ 31 points d'accès).
+- `IMMO_REACT/backend/routers/public.py` (vitrine, 4 points d'accès), `routers/publish.py` (publication, 5 points d'accès), `immo_database.py` (table partagée `public.immo_listings`), `immo_auth.py` (authentification et mode consultation).
+
+**Manuels liés** :
+- Module 07 (Dossiers — pour héberger de vrais fichiers) — `07-ventes-dossiers.md`
+- Module 09 (Projets — distincts des projets immobiliers) — `09-ventes-projets.md`
+- Module 15 (Comptabilité — écritures manuelles) — `15-operations-comptabilite.md`
+- Module 25 (Assistant IA — crédits IA partagés) — `25-communication-assistant-ia.md`
+- Module 28 (Configuration — abonnement et mode consultation) — `28-configuration.md`
