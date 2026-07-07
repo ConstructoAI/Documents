@@ -1,664 +1,829 @@
-# Module 8 — Dossiers (Fiche 360)
+# Module 07 — Dossiers (gestion documentaire)
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/documents.py` (router dossiers + attachments + notes IA + sharing public), `frontend/src/pages/DossiersPage.tsx` (liste), `frontend/src/pages/DossierDetailPage.tsx` (Fiche 360), `frontend/src/pages/DossierPublicPage.tsx` (vue partagee)
-> **Tables PostgreSQL** : `dossiers`, `attachments`, `dossier_notes`, `dossier_devis`, `dossier_projets`, `dossier_formulaires`, `dossier_achats`, `dossier_factures`, `public.dossiers_public_tokens`
+> **Version** : 3.0 (refonte complète vérifiée contre le code source 2026-07)
+> **Route frontend** : `/dossiers` (menu latéral « Dossiers », groupe « Gestion », icône `FolderOpen`, entre « Ventes » et « Soumissions »). Détail : `/dossier/:id` (**au singulier**). Page publique de partage : `/dossiers/public/:token` (sans authentification).
+> **Préfixe API** : `/api/erp/v1` — attention : le nom de la route est `/dossiers` côté écran, mais **tous les endpoints sont sous `/api/erp/v1/documents`** (voir 1.7).
+> **Code de référence (backend)** : `backend/routers/documents.py` (6138 lignes, 58 routes — dossiers, pièces jointes, répertoires, notes, liens, étapes, extras, partage, endpoints publics) · `backend/routers/dossiers_ai.py` (327 lignes, 1 route — assistant Dossiers **en lecture seule**) · `backend/routers/dossier_ai.py` (772 lignes, 2 routes — assistant **Extras/avenants** proposer→confirmer).
+> **Code de référence (frontend)** : `frontend/src/pages/DossiersPage.tsx` (428 lignes — liste) · `frontend/src/pages/DossierDetailPage.tsx` (3911 lignes — Fiche 360, 13 onglets) · `frontend/src/pages/DossierPublicPage.tsx` (561 lignes — page publique) · `frontend/src/components/dossiers/DossiersAssistantTab.tsx` (123 lignes) · `frontend/src/components/dossiers/ExtrasAssistant.tsx` (321 lignes).
+> **Clients API frontend** : `api/documents.ts` (949 lignes), `api/dossiersAi.ts` (35 lignes). Note : **`api/dossiers.ts` n'existe pas** — toutes les pages importent depuis `@/api/documents`.
+> **Tables PostgreSQL (par locataire)** : `dossiers` (en-tête), `attachments` (fichiers stockés en `BYTEA`), `dossier_folders` (arborescence de répertoires), `dossier_notes`, `dossier_liens`, `dossier_etapes`, `dossier_extras` (avenants), et 5 tables de liaison `dossier_devis` / `dossier_projets` / `dossier_formulaires` / `dossier_achats` / `dossier_factures`. Facturation d'un extra : `factures` / `facture_lignes`. Table **partagée** : `public.dossiers_public_tokens` (jetons de partage, schéma `public`). Tables partagées (chemin IA) : `public.ai_prepaid_credits`, `public.ai_usage_tracking`.
+> **Cadrage** : malgré son nom « gestion documentaire », ce module est en réalité une **Fiche 360° de projet**. Un dossier est un **carrefour** qui rassemble, autour d'un même chantier ou d'un même client, l'opportunité, les soumissions, le projet, les bons de travail, les achats, les demandes de prix, les factures, le pointage, la comptabilité (marge), une **arborescence de documents**, des **notes** (avec IA), des **liens** cliquables et des **extras/avenants** facturables. Chaque ligne de la liste porte d'ailleurs la mention « Fiche 360 ». Il ne remplace ni le module Soumissions (qui chiffre les devis), ni le module Comptabilité (qui émet les factures) : il les **relie** et donne une vue d'ensemble.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface (Liste + Fiche 360)](#2-interface-liste-fiche-360)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference](#4-reference)
-5. [Integrations & FAQ](#5-integrations-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
-### 1.1 Mission du module
+### 1.1 Mission
 
-Un **dossier** est un **conteneur 360°** qui regroupe tous les artefacts lies a une opportunite client : devis, projets, bons de travail, demandes de prix, bons de commande, factures, pointages, ecritures comptables, documents joints (plans/photos/contrats), notes (avec enrichissement IA Claude). Le dossier est la **fiche unique** qui donne une vue complete sur un chantier ou un mandat client.
+Le module Dossiers sert à **regrouper au même endroit tout ce qui touche un chantier ou un client**. Au lieu de chercher un devis dans un module, une facture dans un autre et les photos dans un troisième, vous ouvrez **un seul dossier** et vous voyez :
 
-### 1.2 Format numero dossier
+- les **soumissions**, le **projet**, les **bons de travail**, les **achats**, les **demandes de prix** et les **factures** rattachés ;
+- le **pointage** des employés et la **comptabilité** du chantier (revenus, coûts, marge estimée) ;
+- une **arborescence de répertoires et de documents** (plans, photos, contrats, correspondance) ;
+- des **notes** de chantier, avec des outils d'IA pour les enrichir, analyser une photo ou résumer l'ensemble ;
+- des **liens** externes utiles (permis en ligne, dossier infonuagique du client, etc.) ;
+- les **extras (avenants)** au contrat, que vous pouvez suivre et **facturer** en un clic.
 
-**`DOS-YYYY-NNNNN`** (ex. `DOS-2026-00007`).
+Le dossier est aussi votre **outil de partage** : vous pouvez générer un lien public sécurisé pour qu'un client ou un sous-traitant consulte (et, si vous l'autorisez, téléverse) des documents, sans avoir de compte dans l'ERP.
 
-Source : `documents.py:388` `numero_dossier = f"DOS-{year}-{dossier_id:05d}"`.
+### 1.2 Accès par le menu latéral
 
-- `YYYY` = annee a la creation
-- `NNNNN` = id dossier zero-padded sur 5
-- Genere atomiquement via TEMP-then-UPDATE (race-safe)
+Cliquez sur **Dossiers** dans le menu latéral (groupe « Gestion »). La page s'ouvre sur la **liste** des dossiers (`/dossiers`).
 
-### 1.3 5 statuts dossier (DOSSIER_STATUTS)
+Deux liens rapides sont utiles :
 
-Source : `documents.py:50` `DOSSIER_STATUTS = ["OUVERT", "EN_COURS", "EN_ATTENTE", "TERMINE", "ARCHIVE"]`
+- `app.constructoai.ca/dossiers?open=<id>` ouvre **directement** la Fiche 360 d'un dossier. C'est ce lien qu'utilisent les boutons « Voir le dossier » ailleurs dans l'ERP (module Ventes/CRM, par exemple). Le paramètre `open` est consommé puis retiré de l'adresse (`DossiersPage.tsx:142-152`).
+- `app.constructoai.ca/dossiers/public/<token>` est la **page publique** partagée avec un tiers (voir 2.13).
 
-Schema PostgreSQL applique le CHECK constraint :
-```sql
-statut TEXT DEFAULT 'OUVERT' CHECK(statut IN ('OUVERT', 'EN_COURS', 'EN_ATTENTE', 'TERMINE', 'ARCHIVE'))
-```
+> **Nuance d'adresse** : la Fiche 360 vit à `/dossier/<id>` (**au singulier**), tandis que la liste et la page publique sont sous `/dossiers` (au pluriel). C'est voulu dans le code (`App.tsx:221-222`).
 
-| Statut       | Couleur badge | Signification                                  |
-|--------------|---------------|------------------------------------------------|
-| `OUVERT`     | bleu          | Defaut a la creation, dossier actif            |
-| `EN_COURS`   | indigo        | Travaux en cours sur les liens du dossier     |
-| `EN_ATTENTE` | jaune         | En attente d action client/fournisseur         |
-| `TERMINE`    | vert          | Travaux termines, liens cloturables           |
-| `ARCHIVE`    | gris          | Dossier archive (hors flux actif)              |
+### 1.3 Les trois écrans
 
-### 1.4 5 types de dossier
+| Écran | Route | Authentification | Rôle |
+|-------|-------|------------------|------|
+| **Liste des dossiers** | `/dossiers` | Oui | Rechercher, filtrer, créer, supprimer, ouvrir l'assistant IA |
+| **Fiche 360 (détail)** | `/dossier/:id` | Oui | Les 13 onglets, le cœur du module |
+| **Page publique** | `/dossiers/public/:token` | **Non** | Consultation (et téléversement selon le niveau) de documents partagés |
 
-Source : Schema `erp_database.py`
-```sql
-type_dossier TEXT DEFAULT 'PROJET' CHECK(type_dossier IN (
-    'CLIENT', 'PROJET', 'CHANTIER', 'ADMINISTRATIF', 'FINANCIER'
-))
-```
+### 1.4 Numérotation automatique
 
-| Type            | Usage typique                                                   |
-|-----------------|-----------------------------------------------------------------|
-| `CLIENT`        | Dossier centre client (relations, historique)                   |
-| `PROJET`        | **DEFAUT** — Dossier projet (devis -> projet -> facturation)    |
-| `CHANTIER`      | Dossier chantier physique (plans, permis, photos)               |
-| `ADMINISTRATIF` | Dossier interne (RH, conformite, contentieux)                   |
-| `FINANCIER`     | Dossier finance (subvention, financement, retenue)              |
+À la création, chaque dossier reçoit un numéro **`DOS-AAAA-NNNNN`** (ex. `DOS-2026-00042`) : l'année en cours suivie de l'identifiant du dossier sur 5 chiffres (`documents.py:638`). Le numéro est généré de façon **infaillible même en cas de clics simultanés** : le dossier est d'abord inséré avec un numéro provisoire `TEMP`, puis mis à jour avec son numéro définitif dans la même transaction (`documents.py:615-640`). On n'utilise jamais un `COUNT + 1` qui pourrait produire des doublons.
 
-### 1.5 4 priorites
+Les **extras** suivent le même principe avec le format **`EXT-XXXX`** (ex. `EXT-0001`, `documents.py:5834`). La **facture** produite en facturant un extra reçoit un numéro **`FACT-AAAA-NNNNN`** géré par le module Comptabilité.
 
-`BASSE` / `NORMAL` / `HAUTE` / `URGENTE` (defaut `NORMAL`).
+### 1.5 Statuts, types et priorités
 
-> **Note** : `NORMAL` (sans E final) cote dossier ; vs `NORMALE` cote BT. Coherence imparfaite entre modules.
+**5 statuts de dossier** (constante `DOSSIER_STATUTS`, `documents.py:57`). Le statut est **forcé à `OUVERT` à la création** ; il évolue ensuite via le menu déroulant en haut de la Fiche 360.
 
-### 1.6 Acces
+| Valeur (base) | Libellé affiché | Couleur du badge |
+|---------------|-----------------|------------------|
+| `OUVERT` | Ouvert | Bleu |
+| `EN_COURS` | En cours | Vert |
+| `EN_ATTENTE` | En attente | Jaune |
+| `TERMINE` | Terminé | Sarcelle |
+| `ARCHIVE` | Archivé | Gris |
 
-- Sidebar -> **Dossiers** (icone Folder)
-- URL liste : `/dossiers`
-- URL fiche 360 : `/dossiers/{dossier_id}`
-- URL publique (lecture seule) : `/dossiers/public/{token}`
-- Auto-ouverture : `/dossiers?open={dossier_id}`
+Dans les indicateurs de la liste, « Ouverts » regroupe `OUVERT + EN_COURS + EN_ATTENTE`, et « Terminés » regroupe `TERMINE + ARCHIVE` (`documents.py:472-473`).
 
-### 1.7 Permissions
+**5 types de dossier** (menu déroulant de la modale de création) : **Projet**, **Client**, **Fournisseur**, **Administratif**, **Autre**.
 
-- Tous les utilisateurs authentifies du tenant peuvent CRUD les dossiers et leurs liens.
-- **Tokens publics** : 90 jours d expiration (codee en dur). Acces lecture seule, sans authentification.
-- **Pas de roles « gestionnaire de dossier »** : tout le monde peut ouvrir, modifier, supprimer n importe quel dossier.
+**4 priorités** (constante `PRIORITES`, `documents.py:62`) — valeurs en base `BASSE` / `NORMAL` / `HAUTE` / `URGENT`, libellés affichés **Basse** / **Normal** / **Haute** / **Urgent**.
+
+| Priorité | Couleur du badge |
+|----------|------------------|
+| Urgent | Rouge |
+| Haute | Orange |
+| Normal | Bleu |
+| Basse | Gris |
+
+### 1.6 Permissions et rôles
+
+Le module est **volontairement ouvert à toute l'équipe** : presque tous les endpoints exigent simplement un compte ERP valide du locataire (`Depends(get_current_user)`). Autrement dit, tout utilisateur authentifié peut créer un dossier, y attacher des documents, écrire des notes, associer des éléments et gérer les partages. L'isolation entre entreprises reste garantie côté serveur (chaque requête est bornée au schéma du locataire, et chaque dossier est revérifié comme appartenant bien à ce locataire — protection contre l'accès à un identifiant d'autrui).
+
+**Une seule action est réservée** aux administrateurs et aux comptables : **facturer un extra**. L'endpoint `POST …/extras/{eid}/facturer` est protégé par `require_tenant_admin_or_role("comptable")` (`documents.py:6074`) — il faut être `is_admin` (relu côté serveur, infalsifiable), avoir le rôle `admin` ou `comptable`, ou être super-administrateur. La même règle s'applique à l'**auto-facturation** (passage d'un extra à « Approuvé ») et à la facturation demandée via l'assistant IA Extras.
+
+| Action | Qui a le droit |
+|--------|----------------|
+| Consulter, créer, modifier, supprimer un dossier ; documents, notes, liens, étapes, associations, partages | Tout compte ERP valide du locataire |
+| Créer / modifier / supprimer un **extra** | Tout compte ERP valide (mais la **facturation** est bloquée, voir ci-dessous) |
+| **Facturer** un extra (ou approuver un extra qui déclenche l'auto-facture) | `admin`, `comptable`, `is_admin` ou super-administrateur |
+
+**Mode consultation (lecture seule).** Si l'abonnement Stripe du locataire est en souffrance, le compte peut passer en mode **lecture seule** : les lectures fonctionnent, mais **toute écriture renvoie 403**. Ce contrôle est appliqué en amont, dans `get_current_user` (`erp_auth.py:520-528`), et couvre donc **tous** les endpoints authentifiés du module (création de dossier, téléversement, notes, extras, IA). Les **4 endpoints publics par jeton** ne passent pas par `get_current_user` : ils ne sont donc pas soumis au mode consultation, mais ils restent coupés si l'entreprise est désactivée (voir 2.13).
+
+### 1.7 Pourquoi « Dossiers » à l'écran et « documents » dans l'adresse ?
+
+C'est un héritage historique du code : le premier nom interne du module était « documents ». Le préfixe des endpoints est resté `/documents` (`documents.py:50` + `API_PREFIX`, donc `/api/erp/v1/documents/…`), alors que l'interface a été renommée « Dossiers » pour plus de clarté. Le seul endroit où le mot « dossiers » apparaît côté API est l'assistant en lecture seule (`/api/erp/v1/dossiers/ai/chat`). Aucun ancien fichier `dossier.py` n'existe : **le backend est bien `routers/documents.py`**.
+
+### 1.8 Ce que le module ne fait pas (vérifié dans le code)
+
+- **Pas d'onglet « Étapes »** dans la Fiche 360. Le backend sait pourtant gérer une liste d'étapes (`GET/POST …/etapes` + `…/toggle`), et l'API cliente existe, mais **aucun onglet ne l'affiche** dans la version actuelle. C'est une fonctionnalité dormante.
+- **Pas de sélecteur de catégorie au téléversement** : les 10 catégories de documents (PLAN, PHOTO, CONTRAT…) existent côté serveur, mais l'interface de téléversement ne les propose pas. Un document importé reste sans catégorie explicite.
+- **Pas de bouton « Archiver »** : « Archivé » est un **statut** (réglable par le menu déroulant de la Fiche 360), pas une action de la liste. La liste n'offre que Nouveau dossier, Actualiser, Assistant IA et Supprimer.
+- **Pas de vue « Statistiques » séparée** : les 3 indicateurs (Total / Ouverts / Terminés) sont toujours affichés en haut de la liste ; il n'y a pas d'onglet à basculer.
+- **Modale de création minimale** : seuls Nom, Type et Priorité sont demandés. La description, les notes et le statut ne sont pas exposés à la création (le statut est forcé à `OUVERT`).
+- **Aucun export CSV/PDF de la liste, aucune impression, aucune action en lot.** Les seules sorties de fichiers sont le téléchargement d'une pièce jointe et le partage public par lien.
+- **La facturation d'un extra produit une facture BROUILLON** (elle n'est pas envoyée automatiquement au client).
+- **L'assistant IA Dossiers est en lecture seule** et **ne lit pas le contenu des fichiers joints** : il travaille sur les métadonnées (dossiers, notes, étapes, liens, extras, factures liées).
 
 ---
 
-## 2. Interface (Liste + Fiche 360)
+## 2. Interface
 
-### 2.1 Page `/dossiers` (liste)
+### 2.1 Écran Liste — `/dossiers`
 
-Tableau dossiers (cf. `DossiersPage.tsx`) :
+**Barre de commande** (en haut) :
 
-Colonnes :
-- **Numero dossier** (`DOS-YYYY-NNNNN`)
-- **Titre** (texte libre)
-- **Type** (badge : CLIENT / PROJET / CHANTIER / ADMINISTRATIF / FINANCIER)
-- **Statut** (badge : OUVERT / EN_COURS / EN_ATTENTE / TERMINE / ARCHIVE)
-- **Priorite** (badge : BASSE / NORMAL / HAUTE / URGENTE)
-- **Date ouverture**
-- **Date echeance**
-- **Date modification**
+| Bouton | Icône | Effet |
+|--------|-------|-------|
+| **Nouveau dossier** | `Plus` (bleu) | Ouvre la modale de création (voir 2.2). |
+| **Actualiser** | `RefreshCw` | Recharge la liste **et** les indicateurs. |
+| **Assistant IA** | `Sparkles` | Ouvre une grande modale avec l'assistant Dossiers **en lecture seule** (voir 2.14). |
 
-Actions globales :
-- **+ Nouveau dossier** (modale creation)
-- Recherche texte (titre, numero, type)
-- Filtre statut (dropdown)
-- Tri par colonne (clic header)
-- Redimensionnement colonnes
-- Pagination (20/page, configurable)
+À droite de la barre : un **champ de recherche** (« Rechercher... ») et un **filtre de statut** (menu déroulant : Tous les statuts, Ouvert, En cours, En attente, Terminé, Archivé).
 
-**Carte statistiques** (haut de page) :
-- Total dossiers ouverts (statut OUVERT + EN_COURS + EN_ATTENTE)
-- Total termines
-- Total archives
+**Recherche et filtre.** La recherche est faite **côté serveur** avec un léger délai de 300 ms après la frappe (`DossiersPage.tsx:79-85`). Elle porte sur le **titre** et le **numéro** de dossier, sur **tout le locataire** (pas seulement la page affichée), et remet l'affichage à la page 1. Le filtre de statut fait de même.
 
-> **Pas de vue Kanban**, **pas de vue Calendrier**, **pas de bouton Importer/Exporter**. Liste tableau uniquement.
+**Indicateurs (toujours visibles quand ils sont chargés)** — source `GET /documents/statistics` :
 
-### 2.2 Page `/dossiers/{id}` (Fiche 360)
+| Indicateur | Signification |
+|------------|---------------|
+| **Total** | Nombre total de dossiers. |
+| **Ouverts** (bleu) | Dossiers `OUVERT + EN_COURS + EN_ATTENTE`. |
+| **Terminés** (vert) | Dossiers `TERMINE + ARCHIVE`. |
 
-#### 2.2.1 Encart en-tete
+**Tableau (bureau)** — colonnes triables (clic sur l'en-tête) et redimensionnables :
 
-- Bouton retour (fleche gauche)
-- **Titre** (editable inline — clic ouvre champ + boutons Save/Cancel)
-- **Numero dossier** (monospace, non modifiable)
-- Numero opportunite liee (si dossier issu d une opportunite CRM)
-- Nom client (denormalise depuis `companies` via `company_id`)
-- Badge statut + bouton modification statut
-- Bouton **Partager** (Share2) -> genere/affiche lien public
-- Bouton **Supprimer** (Trash2) -> avec avertissement de cascade
+| Colonne | Contenu |
+|---------|---------|
+| **Nom** | Icône dossier + titre + mention bleue « Fiche 360 ». |
+| **Type** | Libellé traduit (Projet / Client / Fournisseur / Administratif / Autre). |
+| **Statut** | Badge coloré. |
+| **Priorité** | Badge coloré. |
+| **Mis à jour** | Date de dernière modification. |
+| **Actions** | Bouton **Supprimer** (corbeille). |
 
-#### 2.2.2 Navigation 12 onglets
+Cliquer n'importe où sur une ligne ouvre la Fiche 360 (`/dossier/:id`). Sur mobile, la même information est présentée en **cartes**. En bas : le total et la **pagination** (20 dossiers par page). Si la liste est vide : « Aucun dossier ».
 
-Source : `DossierDetailPage.tsx:40-51` (`NAV_ITEMS`)
+**Suppression depuis la liste.** Le bouton corbeille demande une confirmation détaillée : la suppression efface les **pièces jointes, notes et étapes**, **détache** (sans les supprimer) les opportunités et projets liés, supprime les **dépenses en cascade**, et **est irréversible**. Un message de succès confirme « Dossier "…" supprimé ».
 
-| # | Cle             | Label              | Icone           | Compteur affiche ? |
-|---|-----------------|--------------------|-----------------|--------------------|
-| 1 | `resume`        | Resume             | FolderOpen      | NON (vue par defaut) |
-| 2 | `devis`         | Soumissions        | FileText        | OUI (count devis)  |
-| 3 | `projet`        | Projet             | Briefcase       | OUI (count projets)|
-| 4 | `bons_travail`  | Bons de travail    | Wrench          | OUI                |
-| 5 | `achats`        | Achats             | ShoppingCart    | OUI (count BC)     |
-| 6 | `demandes_prix` | Demandes de prix   | Send            | OUI                |
-| 7 | `factures`      | Factures           | Receipt         | OUI                |
-| 8 | `pointage`      | Pointage           | Clock           | OUI (heures)       |
-| 9 | `comptabilite`  | Comptabilite       | DollarSign      | OUI (sommaires)    |
-| 10| `documents`     | Documents          | Paperclip       | OUI (count attachments) |
-| 11| `notes`         | Notes              | MessageSquare   | OUI (count notes)  |
-| 12| `liens`         | Liens              | Link2           | OUI (total liens)  |
+### 2.2 Modale « Nouveau dossier »
 
-> **12 onglets exactement**. Pas plus, pas moins. Chaque onglet affiche un badge avec le compteur d items lies (sauf Resume).
+Trois champs seulement :
 
-#### 2.2.3 Onglet « Resume »
+| Champ | Détail |
+|-------|--------|
+| **Nom** * | Obligatoire (texte libre, ex. « Rénovation cuisine Dupont »). |
+| **Type** | Menu déroulant : Projet / Client / Fournisseur / Administratif / Autre. |
+| **Priorité** | Menu déroulant : Basse / Normal / Haute / Urgent. |
 
-Vue d ensemble du dossier :
-- Description (texte libre)
-- Tags
-- Dates (ouverture, echeance, fermeture)
-- Responsable assigne (employe)
-- Compteurs synthetiques de tous les liens (devis, projets, BT, BC, factures, etc.)
-- Notes recentes (3 dernieres)
-- Documents recents (3 derniers)
+Boutons **Annuler** / **Créer**. Un verrou empêche le double-envoi. En cas d'erreur, le message s'affiche **dans la modale**. Le statut n'est pas demandé (il vaut `OUVERT`). À la validation, le dossier `DOS-AAAA-NNNNN` est créé et vous êtes amené à sa Fiche 360.
 
-#### 2.2.4 Onglet « Soumissions / Devis »
+### 2.3 Fiche 360 — en-tête
 
-Liste des devis lies au dossier (via table `dossier_devis`) :
-- Numero devis, titre, montant, statut
-- Bouton **+ Lier un devis** (modale recherche dans devis existants)
-- Bouton **Delier** sur chaque ligne
+En haut de la Fiche 360 (`DossierDetailPage.tsx:216-308`) :
 
-#### 2.2.5 Onglet « Projet »
+- Un bouton **retour** (flèche gauche).
+- Le **titre**, **modifiable sur place** : cliquez sur le crayon, un champ apparaît (255 caractères max) avec les boutons valider/annuler ; **Entrée** enregistre, **Échap** annule.
+- Un bouton **Supprimer le dossier** (corbeille), avec le même avertissement de cascade que la liste.
+- Le **statut**, modifiable sur place par un menu déroulant des 5 valeurs, avec mise à jour immédiate à l'écran.
+- Une ligne de métadonnées : le **numéro de dossier** (police à chasse fixe), un badge du **numéro d'opportunité** si le dossier provient du CRM, et le **nom du client**.
 
-Liste des projets lies (via table `dossier_projets` ET via `dossiers.project_id` direct) :
-- Nom projet, statut, dates, budget
-- Bouton **+ Lier un projet**
+### 2.4 Fiche 360 — les 13 onglets
 
-#### 2.2.6 Onglet « Bons de travail »
+La barre de navigation compte **13 onglets** (`DossierDetailPage.tsx:62-76`). Certains affichent un **compteur** du nombre d'éléments liés.
 
-Liste des BT lies (via `dossier_formulaires` filter `formulaire.type='BON_TRAVAIL'`) :
-- Numero BT, statut, priorite, montant total
-- Click -> redirection `/bons-travail?open={bt_id}`
+| # | Onglet | Compteur ? | Ce qu'on y trouve |
+|---|--------|-----------|-------------------|
+| 1 | **Résumé** | — | Indicateurs financiers, opportunité liée, progression. |
+| 2 | **Soumissions** | Oui | Devis rattachés. |
+| 3 | **Projet** | Oui | Projet rattaché. |
+| 4 | **Bons de travail** | Oui | BT rattachés. |
+| 5 | **Achats** | Oui | Bons de commande rattachés. |
+| 6 | **Demandes de prix** | Oui | Demandes de prix rattachées. |
+| 7 | **Factures** | Oui | Factures rattachées. |
+| 8 | **Pointage** | Oui | Heures et coûts par employé. |
+| 9 | **Comptabilité** | — | Revenus, coûts et marge du dossier. |
+| 10 | **Documents** | Oui | Arborescence de répertoires et de fichiers, partages. |
+| 11 | **Notes** | — | Notes de chantier + outils IA. |
+| 12 | **Liens** | — | Liens externes cliquables. |
+| 13 | **Extras** | — | Avenants et leur facturation. |
 
-#### 2.2.7 Onglet « Achats »
+> **Il n'y a pas d'onglet « Étapes »** malgré son existence côté serveur (voir 1.8). La **gestion des partages** n'est pas un onglet : elle est intégrée dans l'onglet **Documents** (boutons « Partager »).
 
-Liste des BC lies (via `dossier_achats`) :
-- Numero BC, fournisseur, statut, montant
-- Click -> redirection `/magasin?tab=orders&open={bc_id}`
+### 2.5 Onglet Résumé
 
-#### 2.2.8 Onglet « Demandes de prix »
+- **8 indicateurs** : Budget total, Facturé, Payé, Solde dû, Achats, Main-d'œuvre, Marge, et « BT / BC / DP » (compteurs de bons de travail, bons de commande et demandes de prix).
+- Une **carte Opportunité** si le dossier provient du CRM : nom, client, montant, source, badge de statut.
+- Une **carte Progression** : une frise en 5 étapes — Opportunité → Soumission → Projet → Travaux → Facturation — chaque étape se colorant en vert lorsqu'elle est atteinte.
 
-Liste des demandes de prix (via `dossier_formulaires` filter `formulaire.type='DEMANDE_PRIX'`) :
-- Module Demandes de prix non documente separement (cf. accounting.py:2226)
+### 2.6 Associer et retirer des éléments (onglets 2 à 7)
 
-#### 2.2.9 Onglet « Factures »
+Les six onglets **Soumissions, Projet, Bons de travail, Achats, Demandes de prix, Factures** partagent un même mécanisme de rattachement (`LinkableSection`, `DossierDetailPage.tsx:459-581`). Chacun affiche, en plus de sa liste :
 
-Liste des factures (via `dossier_factures`) :
-- Numero facture, type (Vente/Achat), TTC, solde du, statut
+- un bouton **« + Associer {type} »** : il ouvre un menu déroulant des éléments **associables** (ceux qui existent dans le module concerné et ne sont pas déjà rattachés, chargés via `GET /documents/{id}/linkable`) ; le choix crée l'association ;
+- une zone **« Retirer une association »** : des pastilles `#id` cliquables retirent le lien.
 
-#### 2.2.10 Onglet « Pointage »
+Retirer une association **ne supprime jamais l'élément lui-même** : le devis, le projet, la facture, etc. restent intacts ; seul le rattachement au dossier disparaît.
 
-Pointages employes lies au projet du dossier :
-- Liste `time_entries` filtres par `project_id`
-- Total heures par employe
-- Cout total (heures * taux)
+Le contenu de chaque onglet en **lecture** :
 
-#### 2.2.11 Onglet « Comptabilite »
+| Onglet | Colonnes / infos | Ouvre vers |
+|--------|------------------|-----------|
+| **Soumissions** | Numéro, statut, montant, date | `/devis?open=…` |
+| **Projet** | Budget, dates prévue/réelle | `/projets?open=…` |
+| **Bons de travail** | N°, nom, statut, priorité, montant, échéance | `/bons-travail?open=…` |
+| **Achats** | N°, fournisseur, statut, montant, dates commande/livraison | `/magasin?open=…` |
+| **Demandes de prix** | N°, nom, statut, priorité, montant, échéance | (numéro non cliquable) |
+| **Factures** | N°, client, statut, montant TTC, payé, solde dû, date | `/comptabilite?open=…` |
 
-Vue financiere agregee :
-- Sommaire revenus (factures clients liees)
-- Sommaire depenses (factures fournisseurs + BC + heures)
-- Marge calculee
-- Lien vers ecritures journal liees au projet
+Si un onglet n'a aucun élément, il affiche un message du type « Aucune soumission liée à ce dossier ».
 
-#### 2.2.12 Onglet « Documents » (attachments)
+### 2.7 Onglet Pointage
 
-Liste des documents joints (table `attachments`) :
-- Nom, taille, type MIME, categorie, date upload, uploaded_by
-- 10 categories (PLAN / PHOTO / CONTRAT / FACTURE / CORRESPONDANCE / ADDENDA / FICHE_TECHNIQUE / SOUMISSION / DIRECTIVE_CHANTIER / AUTRE — defaut AUTRE)
-- Filtre par categorie
-- Apercu inline (images, PDF) ou bouton telecharger
-- Bouton **+ Uploader** (multipart, max **150 MB** par fichier)
-- Bouton suppression (icone poubelle)
+Deux tableaux (`PointageSection`) :
 
-> **Stockage en base** : les fichiers sont stockes en colonne `BYTEA` (PostgreSQL blob), pas sur S3 ni Azure. Lecture/ecriture par chunks de 64 KB en memoire.
+- **Sommaire par employé** : Employé, Heures, Coût, nombre d'entrées ;
+- **Entrées récentes** (20 au maximum) : Employé, heure d'entrée, heure de sortie, Heures, Type.
 
-#### 2.2.13 Onglet « Notes » (avec IA)
+### 2.8 Onglet Comptabilité
 
-Liste des notes du dossier (table `dossier_notes`) :
-- Texte note, categorie (defaut `general`), `is_pinned` (epinglee), date
-- Pieces jointes (JSON `attachments[]` : nom, type, taille, base64 inline)
-- Bouton **+ Nouvelle note**
-- Bouton **Epingler** / **Desepingler**
-- Bouton **Categoriser** (manuel ou auto via IA)
+Vue financière agrégée du dossier, en deux cartes :
 
-**3 actions IA** disponibles :
+- **Revenus** : Budget total, Total facturé, Total payé, Solde à recevoir, Factures payées, Factures en retard ;
+- **Coûts et marge** : Heures, Coût main-d'œuvre, Achats, Factures fournisseur, Total des coûts, **Marge estimée**, **% de marge**.
 
-| Action                  | Endpoint                            | Modele Claude       | Sortie                                      |
-|-------------------------|-------------------------------------|---------------------|---------------------------------------------|
-| **Enrichir une note**   | `POST /{id}/notes/ai/enrich`        | claude-sonnet-4-6   | Texte structure + categorie + actions a faire |
-| **Analyser une photo**  | `POST /{id}/notes/ai/analyze-photo` | claude-sonnet-4-6 (vision) | Type degat, severite, localisation, remediation |
-| **Resumer toutes notes**| `POST /{id}/notes/ai/summary`       | claude-sonnet-4-6   | Resume + issues ouvertes + actions en cours |
+Ces chiffres sont calculés à la volée par la vue « 360 » du serveur (voir 4.9). Deux subtilités utiles : le coût de main-d'œuvre affiché est le **coût réel de la paie** dès qu'il existe (sinon une estimation à partir des taux horaires), et le calcul **évite les doubles comptages** (les achats déjà représentés par une facture fournisseur ne sont pas comptés deux fois ; les avoirs sont soustraits des revenus).
 
-6 categories de notes : `defaut, observation, progression, decision, action, general`.
+### 2.9 Onglet Documents (le plus riche)
 
-> **Toutes les actions IA deduisent des credits** prepayes du tenant (`_check_credits()`).
+C'est une véritable **arborescence de répertoires et de fichiers**, jusqu'à **5 niveaux de profondeur**.
 
-#### 2.2.14 Onglet « Liens »
+**Barre d'en-tête** : un compteur « {n} documents » et trois boutons :
 
-Vue agregee de tous les liens du dossier (devis + projets + BT + BC + factures + DP) avec types et compteurs.
+| Bouton | Icône | Effet |
+|--------|-------|-------|
+| **Nouveau répertoire / sous-répertoire** | `FolderPlus` | Crée un dossier ou sous-dossier (désactivé au 5ᵉ niveau). |
+| **Partager** | `Share2` | Partage le **dossier entier** (voir 2.9.4). |
+| **Ajouter un document** | `Upload` | Téléverse un ou plusieurs fichiers (jusqu'à **150 Mo** chacun). |
 
-Bouton **+ Nouveau lien** -> modale type + ID -> `POST /documents/{dossier_id}/link`.
+**Fil d'Ariane** : Racine → … permet de remonter dans l'arborescence.
+
+**Glisser-déposer** : une zone de dépôt accepte des fichiers directement, avec une barre de progression (nom du fichier, « Fichier x/y », pourcentage).
+
+**Affichage** : les **répertoires** apparaissent en premier, puis les **fichiers**.
+
+#### 2.9.1 Actions sur un répertoire
+
+Ouvrir · **Partager** (`Share2`) · **Renommer** (`Pencil`) · **Déplacer** (`FolderInput`) · **Copier** (`Copy`) · **Supprimer** (`Trash2`).
+
+À la **suppression d'un répertoire**, une modale demande la stratégie :
+
+- **« Remonter le contenu au parent »** : les sous-répertoires et documents sont rattachés au répertoire parent (ils ne sont pas perdus) ;
+- **« Tout supprimer »** : le sous-arbre entier et ses fichiers sont effacés définitivement.
+
+#### 2.9.2 Actions sur un fichier
+
+Pour les fichiers que vous avez téléversés (source « pièces jointes ») : cliquer sur le nom ouvre l'**aperçu** ; les boutons offrent **Aperçu** (`Eye`), **Télécharger**, **Renommer** (`Pencil`, l'extension d'origine est conservée), **Déplacer** (`FolderInput`), **Copier** (`Copy`) et **Supprimer** (`Trash2`). Les documents provenant d'autres sources (par exemple d'anciennes tables) apparaissent en lecture seule (nom seulement).
+
+L'**aperçu** s'ouvre dans une visionneuse intégrée pour les types pris en charge (images, PDF, texte).
+
+#### 2.9.3 Déplacer / copier (y compris vers un autre dossier)
+
+Une modale unifiée gère le déplacement et la copie. Elle permet de choisir **un autre dossier de destination** (recherche côté serveur, avec délai de frappe) puis un **répertoire cible** dans une arborescence indentée. Le sous-arbre que vous déplacez est exclu des destinations possibles (impossible de déplacer un répertoire dans lui-même). Un avertissement précise qu'un **déplacement vers un autre dossier révoque les partages** du répertoire concerné.
+
+#### 2.9.4 Partager le dossier entier
+
+Le bouton **Partager** (en-tête) génère un lien public de la forme `…/dossiers/public/{token}`. La modale affiche :
+
+- des **statistiques** : nombre de consultations et de téléchargements, et les dernières dates ;
+- les dates **Créé** et **Expire** (le lien du dossier entier expire au bout de **90 jours**) ;
+- deux boutons : **Régénérer** (fait tourner le jeton — l'ancien lien cesse aussitôt de fonctionner) et **Révoquer** (désactive le partage).
+
+Un lien de dossier entier donne accès, en lecture, à **tous** les documents du dossier (mode « liste à plat »).
+
+#### 2.9.5 Partager un seul répertoire (partage ciblé)
+
+Le bouton **Partager** d'un **répertoire** ouvre une modale plus fine, avec deux réglages :
+
+- le **niveau d'accès** : **Lecteur seul** (`reader` — consultation en ligne, téléchargement refusé), **Lecture + téléchargement** (`downloader`), ou **Contributeur** (`contributor` — consultation, téléchargement **et** téléversement par l'invité) ;
+- l'**expiration** : **30 jours**, **90 jours** ou **Jamais** (par défaut 90 jours).
+
+La modale affiche ensuite le lien, ses statistiques, son niveau, sa date d'expiration, et permet de le révoquer. Un partage de répertoire ne donne accès qu'au **sous-arbre** de ce répertoire.
+
+### 2.10 Onglet Notes
+
+**Formulaire d'ajout** : une zone de texte, avec des outils :
+
+- **Enrichir avec IA** (`Sparkles`) : réécrit et structure la note ;
+- **Analyser photo IA** (`Image`) : téléverser une photo de chantier ; l'IA la décrit (constat, gravité, localisation, recommandations) ;
+- **Résumé IA du dossier** (`Bot`) : synthèse de l'ensemble des notes ;
+- **Joindre des fichiers** (`Paperclip`, plusieurs à la fois) ;
+- **Enregistrement audio** (`Mic` / `Square`, avec minuterie mm:ss) — pratique pour dicter une note sur le chantier ;
+- bouton **Ajouter la note**.
+
+Après un enrichissement, un panneau **« Actions identifiées par l'IA »** peut apparaître. Le **Résumé IA** affiche, lui, un résumé, les **« Problèmes ouverts »**, les **« Actions en attente »** et le nombre de notes analysées.
+
+**Liste des notes** : chaque note porte un **badge de catégorie** (defaut, observation, progression, decision, action, general), un indicateur d'**épinglage**, son auteur et sa date. Les pièces jointes s'affichent selon leur type :
+
+- **images** en aperçu direct, avec agrandissement et téléchargement ;
+- **audio** avec un lecteur intégré ;
+- **autres fichiers** sous forme de boutons de téléchargement.
+
+Par note : **Épingler / Désépingler** et **Supprimer**. Les notes épinglées remontent en tête.
+
+> Les pièces jointes de notes sont limitées à **10 fichiers de 15 Mo** par ajout, et l'analyse de photo à **15 Mo**. C'est distinct du téléversement de documents (150 Mo).
+
+### 2.11 Onglet Liens
+
+**Formulaire** : une **URL** * (obligatoire, jusqu'à 2048 caractères, doit commencer par `http://` ou `https://` et ne pas contenir d'espace) et une **Description** (jusqu'à 1000 caractères, avec compteur). La **liste** montre chaque lien (ouverture dans un nouvel onglet, en toute sécurité), sa description et sa date d'ajout, avec édition sur place (`Pencil`) et suppression (`Trash2`).
+
+Ces liens servent à pointer vers des ressources externes : dossier infonuagique du client, permis municipal en ligne, plans hébergés ailleurs, etc.
+
+### 2.12 Onglet Extras (avenants)
+
+L'onglet Extras gère les **avenants au contrat** — les travaux supplémentaires demandés en cours de chantier — et permet de les **facturer**.
+
+**Bouton bascule « Assistant IA »** : ouvre l'assistant Extras (voir 2.14), qui peut proposer de créer/modifier/facturer un extra **sur confirmation**.
+
+**4 cartes de totaux** : **Approuvés**, **À facturer**, **Facturés** (avec, le cas échéant, la note « − X en avoirs » et « + X en brouillon (à envoyer) »), et **Total**. Ces totaux tiennent compte des **avoirs** (notes de crédit) et distinguent les factures encore en **brouillon**.
+
+**Formulaire d'ajout** : **Description** *, **Montant** (avant taxes, jusqu'à 10 000 000 $), **Date**. Bouton **Ajouter l'extra**.
+
+**Liste des extras** : numéro (`EXT-XXXX`), badge de statut, montant, description, date, et « Facturé — {numéro} » le cas échéant.
+
+| Statut d'extra | Libellé | Couleur |
+|----------------|---------|---------|
+| `PROPOSE` | Proposé | Jaune |
+| `APPROUVE` | Approuvé | Bleu |
+| `REFUSE` | Refusé | Rouge |
+| `FACTURE` | Facturé | Vert |
+
+**Actions par ligne** :
+
+- un **menu déroulant de statut** : Proposé / Approuvé / Refusé ;
+- un bouton **« Facturer »** (visible si l'extra est **Approuvé** et son montant positif) → il crée une **facture BROUILLON** liée au dossier ;
+- **Modifier** / **Supprimer**.
+
+Deux règles importantes :
+
+- un extra **Facturé est verrouillé** : ni statut, ni description/montant, ni suppression (le serveur renvoie une erreur 409 si on essaie) ;
+- passer un extra à **Approuvé** peut déclencher une **facturation immédiate** (« auto-facture ») **uniquement si vous avez le droit de facturer** (admin/comptable) **et** que le dossier a un client. Un utilisateur sans ce droit peut approuver un extra sans que rien ne soit facturé — c'est le bouton « Facturer » (ou un administrateur) qui déclenchera la facture plus tard.
+
+### 2.13 Écran public — `/dossiers/public/:token`
+
+C'est la page qu'un client ou un sous-traitant ouvre **sans compte**, à partir du lien que vous lui avez envoyé. Le serveur reconnaît le **jeton** et présente le contenu autorisé.
+
+**Deux modes** selon le type de lien :
+
+- **dossier entier** : la liste à plat de tous les documents ;
+- **répertoire ciblé** : une navigation arborescente en lecture, limitée au sous-arbre partagé.
+
+**En-tête** : le nom de l'entreprise, le titre du dossier, son numéro, un badge de statut, un compteur « Documents partagés » et une **bascule de langue FR / EN**.
+
+**Bandeau de niveau d'accès** :
+
+- niveau **Lecteur seul** : bandeau ambre « Consultation en ligne : téléchargement désactivé » ;
+- niveau **Contributeur** : bandeau bleu invitant à glisser-déposer des fichiers.
+
+**Par fichier** : un bouton **« Consulter »** (si le type est prévisualisable : image, texte ou PDF) et un bouton **« Télécharger »** (sauf au niveau Lecteur seul).
+
+**Zone de téléversement invité** : seulement au niveau **Contributeur** — l'invité peut déposer des fichiers, qui atterrissent dans le répertoire partagé.
+
+**Sécurité de la page publique** (transparente pour l'utilisateur, mais utile à connaître) : le lien est protégé contre les abus par des **limites de débit** (par adresse IP d'abord, puis par jeton), le téléversement invité est plafonné (5000 fichiers / 10 Go cumulés par dossier), les fichiers servis sont vérifiés par leur signature réelle (un fichier déguisé est neutralisé) et forcés en téléchargement, et **le lien cesse de fonctionner si l'abonnement de l'entreprise est désactivé**. Un pied de page rappelle « Lien sécurisé — {entreprise} · Documents en lecture seule ».
+
+### 2.14 Les deux assistants IA
+
+Le module comporte **deux assistants distincts** (ce ne sont pas deux variantes du même) :
+
+| Assistant | Où | Nature |
+|-----------|-----|--------|
+| **Assistant IA Dossiers** | Bouton « Assistant IA » de la **liste** (modale) | **Lecture seule.** Il interroge vos dossiers, notes, étapes, liens, extras et factures liées et répond en langage naturel. Il **n'écrit rien** et **ne lit pas le contenu des fichiers joints**. |
+| **Assistant IA Extras** | Bouton « Assistant IA » de l'**onglet Extras** | **Écriture sur confirmation.** Il peut proposer de créer un extra, de changer son statut, de le facturer, de le modifier ou de le supprimer. Chaque proposition s'affiche sous forme de **carte** (champs + totaux) que vous **confirmez** ou **annulez**. Rien n'est écrit tant que vous n'avez pas confirmé. |
+
+Points communs : les deux répondent en français ou en anglais, gardent un historique borné (40 échanges), empêchent le double-envoi, et **consomment des crédits IA** (le module a donc un coût, voir 4.22). L'assistant Extras revérifie vos droits **au moment de confirmer** une facturation : un utilisateur sans droit de facturation ne peut pas contourner la règle en passant par l'IA.
 
 ---
 
-## 3. Workflows pas-a-pas
+## 3. Workflows pas à pas
 
-### 3.1 Creer un dossier
+### 3.1 Créer un dossier
 
-1. Page Dossiers -> bouton **+ Nouveau dossier**.
-2. Modale :
-   - **Titre** (obligatoire — texte libre)
-   - **Type dossier** (dropdown 5 valeurs — defaut `PROJET`)
-   - **Priorite** (dropdown 4 valeurs — defaut `NORMAL`)
-   - **Description** (texte multi-ligne)
-   - **Client** (dropdown companies — optionnel)
-   - **Projet** (dropdown projects — optionnel, si lie un projet existant)
-   - **Date echeance** (optionnel)
-   - **Tags** (texte libre, virgule separee)
-3. **Enregistrer** -> `POST /documents`.
-4. Backend :
-   - INSERT avec `numero_dossier = TEMP`, `statut = OUVERT`.
-   - UPDATE `numero_dossier = DOS-YYYY-NNNNN` (race-safe).
-5. Reponse `{id, numeroDossier}` -> redirection vers `/dossiers/{id}` (Fiche 360).
+1. Liste des dossiers → **Nouveau dossier**.
+2. Saisir le **Nom** (obligatoire), choisir le **Type** et la **Priorité**.
+3. **Créer** : le dossier `DOS-AAAA-NNNNN` est créé au statut **Ouvert** et sa Fiche 360 s'ouvre.
 
-### 3.2 Auto-creation depuis CRM
+### 3.2 Renommer un dossier ou changer son statut
 
-> **Le seul auto-link** dans le module : a la conversion d une opportunite CRM, un dossier est auto-cree et `opportunities.dossier_id` est renseigne.
+- **Renommer** : dans l'en-tête de la Fiche 360, cliquez sur le **crayon** à côté du titre, tapez le nouveau nom, faites **Entrée** (ou **Échap** pour annuler).
+- **Changer le statut** : utilisez le **menu déroulant** de statut dans l'en-tête (Ouvert / En cours / En attente / Terminé / Archivé). Le changement est immédiat.
 
-1. CRM -> Opportunite -> bouton **Convertir en projet/dossier**.
-2. Backend cree :
-   - Un dossier `DOS-YYYY-NNNNN`
-   - Un devis ou projet
-   - Lie tout via `opportunities.dossier_id`, `opportunities.devis_id`, `opportunities.projet_id`
-3. Le dossier herite des informations client de l opportunite.
+> Pour « archiver » un dossier, mettez simplement son statut à **Archivé**. Il n'y a pas de bouton « Archiver » distinct.
 
-### 3.3 Modifier le dossier (en-tete)
+### 3.3 Rattacher un devis, un projet, une facture, etc.
 
-1. Fiche 360 -> bouton **Edit** sur le titre -> champ inline + Save/Cancel.
-2. PUT `/documents/{id}` avec `{titre: ...}`.
-3. **Champs editables** : `titre`, `statut`, `priorite`, `notes` UNIQUEMENT (whitelist backend).
-4. Autres champs (description, type, client, dates) : non editables apres creation via le PUT principal — necessite endpoints specifiques (a verifier en prod).
+1. Ouvrez l'onglet correspondant (Soumissions, Projet, Bons de travail, Achats, Demandes de prix ou Factures).
+2. Cliquez **« + Associer {type} »**.
+3. Choisissez l'élément dans le menu déroulant (seuls les éléments non encore rattachés apparaissent). Le lien est créé aussitôt.
 
-### 3.4 Lier un devis (ou autre item) au dossier
+Vous pouvez rattacher un même dossier à plusieurs devis, plusieurs factures, etc. Le rattachement est **idempotent** : associer deux fois le même élément ne crée pas de doublon.
 
-1. Fiche 360 -> onglet correspondant (Soumissions, Projet, Bons de travail, etc.).
-2. Bouton **+ Lier un devis** (ou + Lier un projet, etc.).
-3. Modale : recherche de l item a lier (autocomplete par numero/titre).
-4. Selection -> `POST /documents/{dossier_id}/link` avec `{type: "devis", item_id: 42}`.
-5. Backend insere dans la table de jointure correspondante :
-   - `devis` -> `dossier_devis (dossier_id, devis_id)`
-   - `projet` -> `dossier_projets (dossier_id, project_id)`
-   - `bon_travail` ou `demande_prix` -> `dossier_formulaires (dossier_id, formulaire_id)`
-   - `bon_commande` -> `dossier_achats (dossier_id, achat_id)`
-   - `facture` -> `dossier_factures (dossier_id, facture_id)`
-6. ON CONFLICT DO NOTHING (idempotent).
+### 3.4 Détacher un élément
 
-### 3.5 Delier un item du dossier
+1. Dans le même onglet, section **« Retirer une association »**.
+2. Cliquez la pastille `#id` de l'élément à détacher.
 
-1. Onglet correspondant -> ligne item -> bouton **Delier** (icone X).
-2. Confirmation -> `DELETE /documents/{dossier_id}/link/{item_type}/{item_id} (ex. /link/devis/42)`.
-3. DELETE FROM la table de jointure correspondante. L item lui-meme reste intact.
+L'élément d'origine (devis, projet…) reste intact ; seul le lien disparaît.
 
-### 3.6 Uploader un document
+### 3.5 Organiser les documents en répertoires
 
-1. Fiche 360 -> onglet **Documents** -> bouton **+ Uploader**.
-2. Selecteur fichier (peut etre n importe quel type : image, PDF, DOC, XLS, ZIP).
-3. Choisir une **categorie** (dropdown 10 valeurs : PLAN / PHOTO / CONTRAT / FACTURE / CORRESPONDANCE / ADDENDA / FICHE_TECHNIQUE / SOUMISSION / DIRECTIVE_CHANTIER / AUTRE).
-4. **Uploader** -> `POST /documents/{dossier_id}/attachments` (multipart/form-data).
-5. Backend :
-   - Valide la taille (max **150 MB** = `MAX_SIZE = 150 * 1024 * 1024`).
-   - Lecture par chunks de 64 KB.
-   - INSERT dans `attachments` avec `file_data BYTEA`.
-6. Le fichier apparait dans la liste avec apercu inline pour images/PDF.
+1. Onglet **Documents** → **Nouveau répertoire** ; nommez-le.
+2. Pour créer un sous-répertoire, ouvrez d'abord le répertoire parent, puis **Nouveau sous-répertoire** (jusqu'à 5 niveaux).
+3. Pour **déplacer** un fichier ou un répertoire : bouton **Déplacer** → choisissez la destination (même dossier ou un autre dossier, puis le répertoire cible).
+4. Pour **copier** : bouton **Copier** (un répertoire est copié avec tout son contenu).
 
-> **Aucun stockage cloud** : le fichier est en base PostgreSQL. Backups DB doivent etre dimensionnes en consequence.
+### 3.6 Téléverser des documents
 
-### 3.7 Telecharger / supprimer un document
+1. Onglet **Documents** → **Ajouter un document** (ou glissez les fichiers dans la zone de dépôt).
+2. Sélectionnez un ou plusieurs fichiers (150 Mo maximum chacun).
+3. La barre de progression indique l'avancement ; les fichiers apparaissent dans le répertoire courant.
 
-**Telecharger** :
-1. Onglet Documents -> click ligne ou bouton **Telecharger**.
-2. `GET /documents/{dossier_id}/attachments/{attachment_id}/download` -> Content-Disposition: attachment.
+> Le type de fichier est libre. Il n'y a pas de choix de catégorie à cette étape.
 
-**Supprimer** :
-1. Onglet Documents -> icone poubelle.
-2. `DELETE /documents/{dossier_id}/attachments/{attachment_id}`.
-3. DELETE FROM `attachments` WHERE id = ... (hard delete).
+### 3.7 Télécharger, renommer ou supprimer un document
 
-### 3.8 Generer un lien public de partage
+- **Télécharger** : bouton **Télécharger** sur la ligne du fichier.
+- **Aperçu** : cliquez le nom, ou le bouton **Aperçu** (images, PDF, texte).
+- **Renommer** : bouton **Renommer** ; l'extension d'origine est conservée automatiquement.
+- **Supprimer** : bouton **Supprimer** (le fichier est effacé de la base).
 
-1. Fiche 360 -> bouton **Partager** (icone Share2).
-2. Modale : info actuelle (token existant ou non).
-3. Bouton **Generer lien public** -> `POST /documents/{dossier_id}/share`.
-4. Backend :
-   - Genere un token unique (base sur titre + uuid).
-   - Insert dans `public.dossiers_public_tokens (token, schema, dossier_id, expires_at)` avec **expiration 90 jours** (codee en dur).
-5. Reponse `{token, lien: /dossiers/public/{token}, expiration_jours: 90}`.
-6. UI affiche l URL complete -> bouton Copier.
+### 3.8 Partager le dossier entier avec un client
 
-### 3.9 Acceder au dossier en mode public (client)
+1. Onglet **Documents** → **Partager** (en-tête).
+2. Le lien `…/dossiers/public/{token}` est généré (valable **90 jours**). Copiez-le et envoyez-le au client.
+3. Suivez les **consultations** et **téléchargements** dans la même modale.
+4. Pour couper l'accès : **Révoquer**. Pour renouveler le lien (et invalider l'ancien) : **Régénérer**.
 
-1. Le client recoit l URL `https://app.constructo.ai/dossiers/public/{token}`.
-2. Page `DossierPublicPage.tsx` charge `GET /documents/public/{token}` (sans authentification).
-3. Backend valide :
-   - Token existe ?
-   - Token non expire (`expires_at > NOW()`) ?
-4. Si OK : retourne dossier + liste documents (lecture seule).
-5. Page affiche :
-   - Titre, numero, statut du dossier
-   - Liste des **documents joints uniquement** (pas de devis/projets/factures)
-   - Apercu inline ou bouton Telecharger
-6. **Pas d upload client**, **pas de notes**, **pas de modification** depuis la vue publique.
+### 3.9 Partager un seul répertoire avec un niveau d'accès
 
-### 3.10 Revoquer le partage public
+1. Onglet **Documents** → bouton **Partager** sur la **ligne d'un répertoire**.
+2. Choisissez le **niveau** :
+   - **Lecteur seul** : le tiers consulte en ligne mais ne peut pas télécharger ;
+   - **Lecture + téléchargement** : il consulte et télécharge ;
+   - **Contributeur** : il consulte, télécharge **et** peut déposer ses propres fichiers.
+3. Choisissez l'**expiration** (30 jours, 90 jours ou Jamais).
+4. Copiez le lien et envoyez-le. Vous pouvez le révoquer à tout moment.
 
-1. Fiche 360 -> bouton Partager -> bouton **Revoquer**.
-2. `DELETE /documents/{dossier_id}/share` -> DELETE tous les tokens du dossier.
-3. Tous les liens public deviennent invalides instantanement.
+> Utilisez **Contributeur** pour recevoir des documents d'un sous-traitant (photos, fiches techniques) sans lui créer de compte.
 
-### 3.11 Suivre les acces au lien public
+### 3.10 Consulter un lien public (côté client, sans compte)
 
-1. Fiche 360 -> bouton Partager -> info **Statistiques** (si token actif).
-2. `GET /documents/{dossier_id}/share-info` retourne :
-   - `totalViews` (camelCase, frontend) : nombre d ouvertures
-   - `totalDownloads` (camelCase, frontend) : nombre de telechargements de documents
-   - `lastViewedAt`, `lastDownloadedAt` (camelCase, frontend)
+1. Le client ouvre le lien reçu.
+2. Il choisit sa **langue** (FR / EN) au besoin.
+3. Il **consulte** les documents ; il **télécharge** si le niveau l'autorise ; il **dépose** des fichiers s'il est Contributeur.
 
-### 3.12 Creer une note simple
+### 3.11 Écrire une note et l'enrichir avec l'IA
 
-1. Fiche 360 -> onglet **Notes** -> bouton **+ Nouvelle note**.
-2. Champ texte multi-ligne + dropdown **Categorie** (defaut `general`).
-3. Attacher fichiers (drag & drop ou bouton — encodage base64 inline dans `attachments` JSON).
-4. **Enregistrer** -> `POST /documents/{dossier_id}/notes` -> INSERT dans `dossier_notes`.
+1. Onglet **Notes** → tapez votre note dans la zone de texte (ou dictez-la avec le micro).
+2. Joignez des photos/fichiers au besoin (jusqu'à 10 × 15 Mo).
+3. **Ajouter la note.**
+4. Pour la structurer : **Enrichir avec IA**. Pour extraire un constat d'une photo : **Analyser photo IA**. Pour une synthèse de tout le dossier : **Résumé IA du dossier**.
 
-### 3.13 Enrichir une note avec IA Claude
+> Chaque appel d'IA consomme des crédits (voir 4.22).
 
-1. Onglet Notes -> note brute -> bouton **Enrichir IA**.
-2. `POST /documents/{dossier_id}/notes/ai/enrich` avec `{note_id}`.
-3. Backend :
-   - Verifie credits IA disponibles (`_check_credits()`).
-   - Appelle `claude-sonnet-4-6` avec system prompt « assistant IA specialise en construction au Quebec ».
-   - Recoit JSON structure : texte enrichi (avec **gras** sections), categorie auto-detectee, actions a faire identifiees.
-   - UPDATE `dossier_notes` avec le texte enrichi.
-   - Deduit credits.
-4. La note se rafraichit avec le contenu enrichi + categorie suggeree.
+### 3.12 Ajouter un lien externe
 
-### 3.14 Analyser une photo de chantier (defauts) avec IA
+1. Onglet **Liens** → collez l'**URL** (elle doit commencer par `http://` ou `https://`).
+2. Ajoutez une **description** courte.
+3. Validez. Le lien s'ouvre ensuite dans un nouvel onglet, en toute sécurité.
 
-1. Onglet Notes -> bouton **Analyser une photo** -> selectionner image.
-2. `POST /documents/{dossier_id}/notes/ai/analyze-photo` (multipart).
-3. Backend :
-   - Encode photo en base64.
-   - Appelle Claude Sonnet 4.6 vision.
-   - Prompt : detecter degats, gravite, localisation, recommandations de remediation.
-   - Cree une nouvelle note avec le rapport IA.
-4. La note generee apparait dans la liste avec categorie auto (typiquement `defaut` ou `observation`).
+### 3.13 Créer, approuver et facturer un extra (avenant)
 
-### 3.15 Generer un resume de toutes les notes (IA)
+1. Onglet **Extras** → renseignez **Description**, **Montant** (avant taxes) et **Date** → **Ajouter l'extra**. Il naît au statut **Proposé**.
+2. Faites-le valider par le client, puis passez-le à **Approuvé** (menu déroulant de statut).
+3. **Facturer** :
+   - si vous êtes **administrateur ou comptable** et que le dossier a un **client**, passer l'extra à « Approuvé » peut déclencher la facture **automatiquement** ;
+   - sinon, cliquez le bouton **« Facturer »** sur la ligne de l'extra (réservé aux administrateurs/comptables).
+4. Une **facture BROUILLON** `FACT-AAAA-NNNNN` est créée et liée au dossier ; l'extra passe à **Facturé** et se verrouille. Terminez l'envoi de la facture depuis le module Comptabilité.
 
-1. Onglet Notes -> bouton **Generer resume IA**.
-2. `POST /documents/{dossier_id}/notes/ai/summary`.
-3. Backend :
-   - Concatene toutes les notes du dossier.
-   - Appelle Claude pour resumer.
-   - Retourne : resume general + liste issues ouvertes + liste actions en cours.
-4. Affiche dans une modale (pas stocke en base — vue ad hoc).
+> Un extra sans client rattaché au dossier **ne peut pas** être facturé (le système renvoie une erreur explicite). Rattachez d'abord un client au dossier.
 
-### 3.16 Supprimer un dossier (cascade)
+### 3.14 Interroger l'assistant IA Dossiers (lecture)
 
-1. Fiche 360 -> bouton **Supprimer** (icone Trash2 en en-tete).
-2. **Avertissement de cascade** : « Cette action supprimera definitivement le dossier et tous ses elements lies. »
-3. Confirmation -> `DELETE /documents/{id}`.
-4. Backend execute en cascade :
-   - DELETE `dossier_notes` WHERE dossier_id = X
-   - DELETE `attachments` WHERE dossier_id = X (les fichiers BYTEA sont effaces)
-   - DELETE `dossier_devis`, `dossier_projets`, `dossier_formulaires`, `dossier_achats`, `dossier_factures` WHERE dossier_id = X
-   - DELETE `public.dossiers_public_tokens` WHERE dossier_id = X
-   - **SET NULL** sur `opportunities.dossier_id` (l opportunite reste)
-   - DELETE FROM `dossiers` WHERE id = X (hard delete)
-5. Le dossier disparait. **Les items lies (devis, projets, BC, factures) restent intacts**, ils perdent juste le rattachement au dossier.
+1. Liste des dossiers → **Assistant IA**.
+2. Posez une question sur vos dossiers (ex. « Quels dossiers ont un solde dû ? », « Résume les extras approuvés du chantier X »).
+3. L'assistant lit vos données et répond. Il **n'écrit rien** et ne lit pas le contenu des fichiers.
 
-### 3.17 Archiver un dossier (alternative a la suppression)
+### 3.15 Utiliser l'assistant IA Extras (proposer → confirmer)
 
-1. Fiche 360 -> selecteur statut -> choisir **ARCHIVE**.
-2. `PUT /documents/{id}` avec `{statut: ARCHIVE}`.
-3. Le dossier passe en statut archive (badge gris).
-4. **Disparait des listes par defaut** mais reste consultable via filtre statut=ARCHIVE.
-5. Aucune cascade : tous les liens et documents restent en place.
+1. Onglet **Extras** → bascule **Assistant IA**.
+2. Décrivez ce que vous voulez (ex. « Ajoute un extra de 3 200 $ pour le drain français, daté d'aujourd'hui »).
+3. L'IA affiche une **carte de proposition** (champs + total).
+4. Vérifiez, puis **Confirmer** (l'extra est réellement créé/modifié/facturé) ou **Annuler**. Une facturation confirmée revérifie vos droits.
 
-> Recommandation : preferer **archiver** plutot que supprimer pour conserver l historique.
+### 3.16 Supprimer un dossier
+
+1. En-tête de la Fiche 360 (ou bouton corbeille de la liste) → **Supprimer**.
+2. Confirmez l'avertissement.
+3. Le serveur supprime **en cascade** les pièces jointes, notes, étapes, liens, extras et les 5 tables de liaison, purge les jetons de partage, puis **détache** (met à NULL) les opportunités et projets liés (ils ne sont pas supprimés). L'opération est **irréversible**.
+
+> Les devis, projets, bons de commande et factures liés **restent en base** — ils perdent seulement leur rattachement au dossier.
 
 ---
 
-## 4. Reference
+## 4. Référence
 
-### 4.1 Statuts (DOSSIER_STATUTS)
+> Rappel : la base de tous les endpoints est `/api/erp/v1`. « lecture » = `Depends(get_current_user)` (tout compte du locataire). Les écritures sont automatiquement bloquées en **mode consultation** (lecture seule, pilotée par Stripe).
 
-Source : `documents.py:50` + `erp_database.py` (CHECK constraint)
+### 4.1 Écrans et routes
 
-`["OUVERT", "EN_COURS", "EN_ATTENTE", "TERMINE", "ARCHIVE"]`
+| Écran | Route front | Composant |
+|-------|-------------|-----------|
+| Liste | `/dossiers` | `DossiersPage.tsx` |
+| Détail (Fiche 360) | `/dossier/:id` | `DossierDetailPage.tsx` |
+| Page publique | `/dossiers/public/:token` | `DossierPublicPage.tsx` |
 
-### 4.2 Types (CHECK constraint)
+### 4.2 Endpoints — dossier (CRUD)
 
-`['CLIENT', 'PROJET', 'CHANTIER', 'ADMINISTRATIF', 'FINANCIER']` — defaut `PROJET`.
+| Méthode | Chemin | Garde | Référence |
+|---------|--------|-------|-----------|
+| GET | `/documents/statistics` | lecture | `documents.py:451` |
+| GET | `/documents` | lecture | `documents.py:488` |
+| GET | `/documents/{id}` | lecture | `documents.py:574` |
+| POST | `/documents` | lecture | `documents.py:607` |
+| PUT | `/documents/{id}` | lecture | `documents.py:663` |
+| DELETE | `/documents/{id}` | lecture | `documents.py:706` |
 
-### 4.3 Priorites
+> `PUT /documents/{id}` n'accepte que 4 champs : **titre**, **statut**, **priorite**, **notes** (liste blanche). `DELETE` verrouille le dossier, purge 13 tables enfant et les jetons de partage, puis met à NULL `opportunities.dossier_id` et `projects.dossier_id`.
 
-`['BASSE', 'NORMAL', 'HAUTE', 'URGENTE']` — defaut `NORMAL`.
+### 4.3 Endpoints — pièces jointes (fichiers `BYTEA`)
 
-> **Note de coherence** : `NORMAL` (sans E) ici vs `NORMALE` (avec E) sur les BT. Pas d harmonisation cross-modules.
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| POST | `/documents/{id}/attachments` | Téléverser (max **150 Mo** → 413) | `documents.py:1005` |
+| GET | `/documents/{id}/attachments` | Lister | `documents.py:1090` |
+| GET | `/documents/{id}/attachments/{att_id}/download` | Télécharger | `documents.py:1127` |
+| GET | `/documents/{id}/attachments/{att_id}/preview` | Aperçu en ligne (durci) | `documents.py:1177` |
+| DELETE | `/documents/{id}/attachments/{att_id}` | Supprimer | `documents.py:1287` |
+| PATCH | `/documents/{id}/attachments/{att_id}/folder` | Déplacer (dossier/répertoire) | `documents.py:1937` |
+| PATCH | `/documents/{id}/attachments/{att_id}` | Renommer (extension conservée) | `documents.py:1997` |
+| POST | `/documents/{id}/attachments/{att_id}/copy` | Copier | `documents.py:2059` |
 
-### 4.4 12 Onglets Fiche 360 (NAV_ITEMS)
+### 4.4 Endpoints — répertoires (arborescence, profondeur ≤ 5)
 
-Source : `DossierDetailPage.tsx:40-51`
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| POST | `/documents/{id}/folders` | Créer | `documents.py:1509` |
+| GET | `/documents/{id}/folders` | Lister | `documents.py:1571` |
+| PUT | `/documents/{id}/folders/{fid}` | Renommer / déplacer | `documents.py:1607` |
+| DELETE | `/documents/{id}/folders/{fid}` | Supprimer (`reparent` ou `cascade`) | `documents.py:1766` |
+| PATCH | `/documents/{id}/folders/{fid}/move` | Déplacer le sous-arbre (cross-dossier) | `documents.py:2137` |
+| POST | `/documents/{id}/folders/{fid}/copy` | Copier récursivement | `documents.py:2322` |
 
-`[resume, devis, projet, bons_travail, achats, demandes_prix, factures, pointage, comptabilite, documents, notes, liens]`
+### 4.5 Endpoints — notes (+ IA)
 
-### 4.5 10 Categories documents (DOCUMENT_CATEGORIES)
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| GET | `/documents/{id}/notes` | Lister (100 max, épinglées d'abord) | `documents.py:2609` |
+| POST | `/documents/{id}/notes` | Créer (1 à 20000 caractères) | `documents.py:2662` |
+| POST | `/documents/{id}/notes-with-files` | Créer avec fichiers (**10 × 15 Mo**) | `documents.py:2700` |
+| GET | `/documents/{id}/notes/{nid}/attachment/{idx}` | Télécharger une pièce jointe de note | `documents.py:2783` |
+| DELETE | `/documents/{id}/notes/{nid}` | Supprimer | `documents.py:2832` |
+| PATCH | `/documents/{id}/notes/{nid}/pin` | Épingler / désépingler | `documents.py:3468` |
+| PATCH | `/documents/{id}/notes/{nid}/categorie` | Recatégoriser | `documents.py:3508` |
+| POST | `/documents/{id}/notes/ai/enrich` | **IA** : enrichir (crédits) | `documents.py:3083` |
+| POST | `/documents/{id}/notes/ai/analyze-photo` | **IA Vision** : analyser une photo (**15 Mo**, crédits) | `documents.py:3187` |
+| POST | `/documents/{id}/notes/ai/summary` | **IA** : résumer (≤ 200 notes, crédits) | `documents.py:3326` |
 
-Source : `documents.py:47`
+### 4.6 Endpoints — liens, étapes, éléments liés, 360
 
-`PLAN, PHOTO, CONTRAT, FACTURE, CORRESPONDANCE, ADDENDA, FICHE_TECHNIQUE, SOUMISSION, DIRECTIVE_CHANTIER, AUTRE` — defaut `AUTRE`.
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| GET/POST/PUT/DELETE | `/documents/{id}/liens[/{lid}]` | Liens externes (URL `http(s)` ≤ 2048) | `documents.py:2871`+ |
+| GET/POST | `/documents/{id}/etapes` | Étapes (**pas d'onglet UI**) | `documents.py:2482`, `2518` |
+| PUT | `/documents/{id}/etapes/{eid}/toggle` | Cocher/décocher une étape | `documents.py:2555` |
+| GET | `/documents/{id}/linked` | Éléments liés (résumé) | `documents.py:3553` |
+| GET | `/documents/{id}/360` | Vue agrégée (Résumé/Comptabilité) | `documents.py:3646` |
 
-### 4.6 6 Categories notes (_NOTE_CATEGORIES)
+### 4.7 Endpoints — associer / dissocier des éléments
 
-Source : `documents.py:30-31`
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| POST | `/documents/{id}/link` | Associer un élément | `documents.py:5488` |
+| DELETE | `/documents/{id}/link/{type}/{item_id}` | Dissocier | `documents.py:5538` |
+| GET | `/documents/{id}/linkable?item_type=` | Éléments associables | `documents.py:5577` |
 
-`defaut, observation, progression, decision, action, general` — defaut `general` (lowercase).
+**Types et tables de liaison** (`LINK_TABLES`, `documents.py:5446`) : `devis` → `dossier_devis` · `projet` → `dossier_projets` · `bon_travail` → `dossier_formulaires` (filtre `BON_TRAVAIL`) · `bon_commande` → `dossier_achats` · `facture` → `dossier_factures` · `demande_prix` → `dossier_formulaires` (filtre `DEMANDE_PRIX`).
 
-### 4.7 Format numero dossier
+### 4.8 Endpoints — partage par jeton
 
-`DOS-YYYY-NNNNN`. Exemples : `DOS-2026-00001`, `DOS-2026-00007`, `DOS-2027-00500`.
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| POST | `/documents/{id}/share` | Générer / régénérer le lien du dossier (**90 j**) | `documents.py:4492` |
+| DELETE | `/documents/{id}/share` | Révoquer le lien du dossier | `documents.py:4530` |
+| GET | `/documents/{id}/share-info` | Jeton + statistiques | `documents.py:4585` |
+| POST | `/documents/{id}/folders/{fid}/share` | Lien d'un répertoire (niveau + expiration) | `documents.py:4621` |
+| DELETE | `/documents/{id}/folders/{fid}/share` | Révoquer le lien d'un répertoire | `documents.py:4700` |
+| GET | `/documents/{id}/folders/{fid}/share-info` | Jeton + statistiques (répertoire) | `documents.py:4760` |
+| GET | `/documents/{id}/shares` | Lister tous les liens actifs | `documents.py:4814` |
 
-> Race-safe via INSERT TEMP + UPDATE par id (lesson #113).
+### 4.9 Endpoints — page publique (sans authentification)
 
-### 4.8 Tables PostgreSQL
+| Méthode | Chemin | Rôle | Référence |
+|---------|--------|------|-----------|
+| GET | `/documents/public/{token}` | Métadonnées + liste des documents | `documents.py:4934` |
+| GET | `/documents/public/{token}/attachments/{att_id}` | Aperçu en ligne | `documents.py:5114` |
+| GET | `/documents/public/{token}/attachments/{att_id}/download` | Télécharger (**refusé au niveau `reader`**) | `documents.py:5193` |
+| POST | `/documents/public/{token}/upload` | Téléverser (**`contributor` seulement**) | `documents.py:5285` |
 
-| Table                          | Role                                               | Cles                              |
-|--------------------------------|----------------------------------------------------|-----------------------------------|
-| `dossiers`                     | En-tete dossier                                    | PK `id`, FK `project_id`, FK `company_id`, FK `responsable_id`, UNIQUE `numero_dossier` |
-| `attachments`                  | Documents joints (BYTEA blob max 150 MB)           | PK `id`, FK `dossier_id`, `category` |
-| `dossier_notes`                | Notes (avec IA enrichment + JSON attachments inline) | PK `id`, FK `dossier_id`, `categorie`, `is_pinned` |
-| `dossier_devis`                | Lien devis                                         | PK composite `(dossier_id, devis_id)` |
-| `dossier_projets`              | Lien projets                                       | PK composite `(dossier_id, project_id)` |
-| `dossier_formulaires`          | Lien BT + Demandes de prix (filtre par `formulaire.type`) | PK composite `(dossier_id, formulaire_id)` |
-| `dossier_achats`               | Lien BC                                            | PK composite `(dossier_id, achat_id)` |
-| `dossier_factures`             | Lien factures                                      | PK composite `(dossier_id, facture_id)` |
-| `public.dossiers_public_tokens`| Tokens partage public (cross-tenant — schema `public`) | PK `token`, `schema`, `dossier_id`, `expires_at` |
+### 4.10 Endpoints — extras (avenants) et facturation
 
-### 4.9 Endpoints principaux
+| Méthode | Chemin | Garde | Référence |
+|---------|--------|-------|-----------|
+| GET | `/documents/{id}/extras` | lecture | `documents.py:5694` |
+| POST | `/documents/{id}/extras` | lecture (crée en **Proposé**) | `documents.py:5797` |
+| PUT | `/documents/{id}/extras/{eid}` | lecture (verrou si facturé → 409 ; auto-facture si admin/comptable) | `documents.py:5859` |
+| DELETE | `/documents/{id}/extras/{eid}` | lecture (409 si facturé) | `documents.py:5964` |
+| POST | `/documents/{id}/extras/{eid}/facturer` | **`require_tenant_admin_or_role("comptable")`** | `documents.py:6072` |
 
-| Methode | URL                                              | Role                                      |
-|---------|--------------------------------------------------|-------------------------------------------|
-| GET     | `/documents`                                     | Liste paginee + filtre statut             |
-| POST    | `/documents`                                     | Creer dossier (auto-numero)               |
-| GET     | `/documents/{id}`                                | Detail dossier                            |
-| PUT     | `/documents/{id}`                                | Update (whitelist titre/statut/priorite/notes) |
-| DELETE  | `/documents/{id}`                                | Supprimer + cascade complete              |
-| GET     | `/documents/statistics`                          | KPI par statut                            |
-| POST    | `/documents/{id}/link`                           | Lier item (devis/projet/BT/BC/facture)    |
-| DELETE  | `/documents/{id}/link`                           | Delier item                               |
-| GET/POST/DELETE | `/documents/{id}/attachments[/...]`      | CRUD documents joints                     |
-| GET     | `/documents/{id}/attachments/{attachment_id}/download` | Download fichier                  |
-| GET/POST/PUT/DELETE | `/documents/{id}/notes[/...]`        | CRUD notes                                |
-| POST    | `/documents/{id}/notes/ai/enrich`                | IA enrichir note                          |
-| POST    | `/documents/{id}/notes/ai/analyze-photo`         | IA analyser photo                         |
-| POST    | `/documents/{id}/notes/ai/summary`               | IA resumer toutes les notes               |
-| POST    | `/documents/{id}/share`                          | Generer token public 90j                  |
-| DELETE  | `/documents/{id}/share`                          | Revoquer tous les tokens                  |
-| GET     | `/documents/{id}/share-info`                     | Stats acces (vues, telechargements)       |
-| GET     | `/documents/public/{token}`                      | Vue publique (sans auth)                  |
+> Facturer produit une **facture BROUILLON** via le module Comptabilité (`_create_invoice_from_source`), avec les taxes du locataire et un numéro `FACT-AAAA-NNNNN`, puis lie la facture au dossier et passe l'extra à **Facturé**.
 
-### 4.10 Validations & limites
+### 4.11 Endpoints — assistants IA
 
-| Regle                                  | Effet                                                  |
-|----------------------------------------|--------------------------------------------------------|
-| `titre` vide                           | HTTP 400                                               |
-| `statut` hors `DOSSIER_STATUTS`        | DB CHECK refuse                                        |
-| `type_dossier` hors valeurs autorisees | DB CHECK refuse                                        |
-| Upload fichier > 150 MB                | HTTP 413 (Payload Too Large)                           |
-| Token public expire                    | HTTP 404 ou message expiration sur DossierPublicPage   |
-| IA credits insuffisants                | HTTP 402 (Payment Required)                            |
+| Assistant | Méthode | Chemin | Nature | Référence |
+|-----------|---------|--------|--------|-----------|
+| **Dossiers (lecture seule)** | POST | `/dossiers/ai/chat` | Interroge la base (SELECT en liste blanche) | `dossiers_ai.py:209` (monté `erp_api.py:1021`) |
+| **Extras (proposer→confirmer)** | POST | `/documents/ai/chat` | Propose des actions sur les extras | `dossier_ai.py:490` (monté `erp_api.py:1137`) |
+| **Extras (proposer→confirmer)** | POST | `/documents/ai/confirm-action` | Exécute l'action confirmée (revérifie les droits) | `dossier_ai.py:666` |
+
+### 4.12 Statuts, types, priorités, catégories
+
+| Ensemble | Valeurs (base) |
+|----------|----------------|
+| Statuts de dossier (`DOSSIER_STATUTS`, `documents.py:57`) | OUVERT · EN_COURS · EN_ATTENTE · TERMINE · ARCHIVE |
+| Types de dossier (UI) | Projet · Client · Fournisseur · Administratif · Autre |
+| Priorités (`PRIORITES`, `documents.py:62`) | BASSE · NORMAL · HAUTE · URGENT |
+| Catégories de documents (`DOCUMENT_CATEGORIES`, `documents.py:52`) — **définies mais non exposées à l'écran** | PLAN · PHOTO · CONTRAT · FACTURE · CORRESPONDANCE · ADDENDA · FICHE_TECHNIQUE · SOUMISSION · DIRECTIVE_CHANTIER · AUTRE (défaut AUTRE) |
+| Catégories de notes (`_NOTE_CATEGORIES`, `documents.py:39`) | defaut · observation · progression · decision · action · general (défaut general) |
+| Statuts d'extra (`EXTRA_STATUTS`, `documents.py:112`) | PROPOSE · APPROUVE · REFUSE · FACTURE |
+| Niveaux de partage de répertoire (`_VALID_PERMISSION_LEVELS`, `documents.py:140`) | reader · downloader · contributor |
+
+### 4.13 Calcul de la comptabilité 360 (onglet Comptabilité / Résumé)
+
+Source : `GET /documents/{id}/360` (`documents.py:3646`, bloc comptable `4050-4139`).
+
+| Élément | Règle |
+|---------|-------|
+| **Périmètre** | Ancré sur le projet ou l'opportunité du dossier ; élargi au client **seulement** s'il n'y a aucun ancrage (évite de compter deux fois entre dossiers d'un même client). |
+| **Coût main-d'œuvre** | Estimation `SUM(heures × taux)` **remplacée** par le coût réel de la paie (`payroll_entry_projets.cout_reparti`) dès qu'il est positif. |
+| **Revenus** | Exclut les factures ANNULÉE et BROUILLON, exclut les factures fournisseur, **soustrait les avoirs** ; marge calculée sur la base **hors taxes**. |
+| **Achats** | Bons de commande **non** déjà représentés par une facture fournisseur comptée (anti double-comptage). |
+| **Marge estimée** | `total_facturé_HT − total_coûts`. |
+
+### 4.14 Limites, bornes et défenses
+
+| Élément | Valeur |
+|---------|--------|
+| Téléversement d'un document | **150 Mo** par fichier (→ 413) ; lecture par tranches de 64 Ko |
+| Pièces jointes de note | **10 fichiers × 15 Mo** |
+| Analyse de photo IA | **15 Mo** |
+| Profondeur de l'arborescence | **5 niveaux** (racine = niveau 1) |
+| Montant d'un extra | ≤ **10 000 000 $** |
+| Note (texte) | 1 à 20000 caractères |
+| Description d'un lien | ≤ 1000 caractères ; URL `http(s)` ≤ 2048 |
+| Pagination de la liste | `page` ≥ 1, `per_page` 1-100 (20 à l'écran) |
+| Recherche | LIKE échappé (`% _`), tronquée à 100 caractères |
+| Expiration — lien de dossier | **90 jours** (fixe) |
+| Expiration — lien de répertoire | 30 j / 90 j / **Jamais** (défaut 90 j, ≤ 3650 j) |
+| Débit — lecture publique | 480 / 10 min par IP · 240 / 10 min par jeton |
+| Débit — téléversement public | 300 / 10 min par IP · 200 / 10 min par jeton |
+| Plafond cumulatif — invités (contributeur) | 5000 fichiers / 10 Go par dossier (→ 429) |
+
+### 4.15 Sécurité des fichiers (auth et public)
+
+- **Signature réelle vérifiée** (« magic bytes ») : un fichier déguisé (ex. exécutable renommé en `.pdf`) est servi en `octet-stream`, jamais interprété.
+- **Aperçu en ligne restreint** à une liste blanche de types (image, PDF, texte), avec en-têtes `X-Content-Type-Options: nosniff` et une politique de contenu stricte.
+- **Nom de fichier assaini** pour l'en-tête de téléchargement (pas d'injection de retour à la ligne).
+- **Téléchargement forcé** (`Content-Disposition: attachment`) pour les téléchargements.
+- **Jetons** générés aléatoirement (`secrets.token_urlsafe`) ; régénérer fait **tourner** le jeton de façon atomique (aucun lien fantôme).
+- **Isolation** : chaque dossier, répertoire et pièce jointe est revérifié comme appartenant au bon locataire (protection contre l'accès par identifiant d'autrui).
+
+### 4.16 Assistants IA — modèle, coût, débit
+
+| Élément | Valeur |
+|---------|--------|
+| Modèle | `claude-sonnet-4-6` |
+| Coût par échange | (entrée × 0,003 + sortie × 0,015) / 1000 × **1,30** (marge 30 %) |
+| Débité de | `public.ai_prepaid_credits` (crédits prépayés du locataire) |
+| Gardes | 503 si l'IA est indisponible · 403 si l'IA est bloquée · 402 si crédits insuffisants |
+| Débit par IP — notes IA | 15 / min |
+| Débit par IP — assistant Dossiers | 20 / min |
+| Débit par IP — assistant Extras | 20 / min |
+| Assistant Dossiers | **Lecture seule**, ne lit pas le contenu des fichiers |
+| Assistant Extras | Écriture **sur confirmation** ; facturation revérifiée (admin/comptable) |
+
+### 4.17 Raccourcis et gestes
+
+| Action | Geste |
+|--------|-------|
+| Ouvrir un dossier | Clic sur la ligne (liste) ou `/dossiers?open=<id>` |
+| Renommer le titre | Crayon → **Entrée** (valider) / **Échap** (annuler) |
+| Téléverser | Bouton « Ajouter un document » **ou** glisser-déposer dans la zone |
+| Envoyer un message à un assistant IA | **Entrée** |
+| Régénérer un lien de partage | Bouton « Régénérer » (l'ancien lien cesse aussitôt) |
 
 ---
 
-## 5. Integrations & FAQ
+## 5. Intégrations et FAQ
 
-### 5.1 Integration CRM (Opportunites)
+### 5.1 Liens avec les autres modules
 
-> **Le seul auto-link** du module : a la conversion d une opportunite CRM, un dossier est cree automatiquement et `opportunities.dossier_id` est renseigne.
+| Module | Lien |
+|--------|------|
+| **06 — Ventes (CRM)** | À la conversion d'une opportunité, un dossier peut être créé et relié (`opportunities.dossier_id`). Le bouton « Voir le dossier » du CRM ouvre `/dossiers?open=<id>`. À la suppression du dossier, l'opportunité est **détachée** (non supprimée). |
+| **08 — Soumissions (devis)** | Les devis se rattachent au dossier (onglet Soumissions) et s'ouvrent via `/devis?open=…`. |
+| **09 — Projets** | Un projet peut être relié (`projects.dossier_id`) ; il alimente le pointage et la comptabilité du dossier. Détaché à la suppression du dossier. |
+| **12 — Bons de travail** | Rattachés via l'onglet Bons de travail ; ouverture via `/bons-travail?open=…`. |
+| **13 — Pointage** | L'onglet Pointage agrège les heures et coûts des employés sur le projet du dossier. |
+| **14 — Bons de commande / Magasin** | Les achats se rattachent (onglet Achats) et s'ouvrent via `/magasin?open=…`. |
+| **15 — Comptabilité** | Les factures se rattachent (onglet Factures) ; **facturer un extra** y crée une facture BROUILLON. L'onglet Comptabilité calcule revenus, coûts et marge. |
+| **25 — Assistant IA** | Les assistants Dossiers et Extras (et les outils IA des notes) consomment les **crédits prépayés** du locataire. |
+| **28 — Configuration** | La configuration de taxes du locataire s'applique à la facture d'un extra. L'état de l'abonnement Stripe pilote le **mode consultation**. |
+| **Application mobile** | La table des extras est **partagée** avec l'application mobile de chantier : un extra saisi sur le terrain apparaît dans l'onglet Extras du web (et inversement). |
 
-- Dans la Fiche 360, le numero d opportunite associee s affiche dans l en-tete (si present).
-- A la suppression du dossier, `opportunities.dossier_id` est mis a NULL (l opportunite reste).
+### 5.2 FAQ
 
-### 5.2 Integration Devis / Projets / BT / BC / Factures
+**Q1. Pourquoi l'adresse dit « documents » alors que le menu dit « Dossiers » ?**
+C'est un héritage du code : le nom interne d'origine était « documents ». L'interface a été renommée « Dossiers », mais les endpoints restent sous `/api/erp/v1/documents`. C'est cosmétique et sans effet pour vous.
 
-**Aucun auto-link** apres creation initiale. Tous les rattachements ulterieurs sont **manuels** via :
-- Bouton **+ Lier** dans l onglet correspondant
-- Ou recherche/selection du dossier au moment de la creation de l item (ex. champ « Dossier associe » dans la modale de creation devis/BC/facture)
+**Q2. Qui peut créer, modifier ou supprimer un dossier ?**
+Tout utilisateur du locataire ayant un compte ERP valide. Il n'y a pas de rôle « gestionnaire de dossier ». La **seule** action réservée (aux administrateurs et comptables) est la **facturation d'un extra**.
 
-> Exception : les BT et BC creent un auto-link au dossier **a la creation** SI leur projet est lie a une opportunite avec un dossier_id (cf. modules 5 et 6).
+**Q3. Où sont stockés les fichiers ? Y a-t-il une limite ?**
+Les documents sont stockés **dans la base de données** (colonne `BYTEA`), pas sur un service infonuagique externe. La limite est de **150 Mo par fichier**. Les pièces jointes de notes sont limitées à 10 fichiers de 15 Mo.
 
-### 5.3 Integration B2B Portal
+**Q4. Comment archiver un dossier ?**
+Mettez son statut à **Archivé** (menu déroulant de l'en-tête). Il n'y a pas de bouton « Archiver » distinct, et l'archivage ne supprime rien.
 
-> **Pas d integration** : le module B2B Portal a son propre systeme de partage avec le client. Les dossiers ne sont **PAS** exposes au B2B Portal.
+**Q5. Puis-je choisir une catégorie (Plan, Photo, Contrat…) au téléversement ?**
+Non. Les catégories existent côté serveur mais ne sont pas proposées à l'écran. Organisez plutôt vos fichiers en **répertoires**.
 
-Le partage public utilise plutot des **tokens 90j** avec URL `/dossiers/public/{token}` et limite l acces aux **documents joints** (pas devis, projets, factures).
+**Q6. Quelle est la différence entre partager le dossier et partager un répertoire ?**
+Le partage du **dossier entier** donne accès, en lecture, à tous les documents (lien de 90 jours). Le partage d'un **répertoire** est plus fin : vous choisissez le **niveau** (Lecteur seul / Lecture + téléchargement / Contributeur) et l'**expiration** (30 j, 90 j, Jamais), et l'accès se limite au sous-arbre partagé.
 
-### 5.4 Integration Messagerie
+**Q7. Le client peut-il déposer des fichiers via le lien public ?**
+Oui, mais **seulement** si vous lui donnez un lien de **répertoire** au niveau **Contributeur**. Les liens de dossier entier et les niveaux Lecteur seul / Lecture + téléchargement ne permettent pas le dépôt.
 
-> **Pas d onglet Messages** sur la Fiche 360. Le module de messagerie (`/messages`) est independant et n est pas integre au dossier.
+**Q8. Comment couper un accès partagé ?**
+Ouvrez le partage concerné et cliquez **Révoquer**. Pour renouveler un lien (et invalider immédiatement l'ancien), cliquez **Régénérer**. Un lien cesse aussi de fonctionner à son expiration, ou si l'abonnement de l'entreprise est désactivé.
 
-Pour communiquer avec le client sur un dossier, utiliser :
-- Notes du dossier (interne)
-- Email manuel avec lien public partage
-- Module B2B Portal (separe)
+**Q9. Puis-je suivre qui a consulté ou téléchargé ?**
+Oui : la modale de partage affiche le nombre de **consultations** et de **téléchargements**, ainsi que les dernières dates. Il n'y a pas de notification par courriel automatique.
 
-### 5.5 Integration Photos / Plans
+**Q10. Que se passe-t-il si je supprime un dossier ?**
+Ses pièces jointes, notes, étapes, liens et extras sont **supprimés** ; les jetons de partage sont purgés ; les opportunités et projets liés sont **détachés** (conservés). Les devis, bons de travail, bons de commande et factures liés **restent** en base — ils perdent seulement le rattachement. L'opération est **irréversible** : préférez l'archivage si vous hésitez.
 
-- Onglet Documents avec categorie `PHOTO` ou `PLAN` -> centralise les fichiers visuels.
-- Apercu inline pour images (PNG, JPG, GIF) et PDF.
-- IA Analyse photos -> note de defauts/observations auto.
+**Q11. Qu'est-ce qu'un extra, et pourquoi certaines personnes ne voient pas de bouton « Facturer » ?**
+Un extra est un **avenant** (travaux supplémentaires). N'importe qui peut le créer et le suivre, mais **seuls les administrateurs et comptables peuvent le facturer**. Pour les autres, le bouton « Facturer » n'apparaît pas.
 
-### 5.6 Backups et stockage
+**Q12. Facturer un extra envoie-t-il la facture au client ?**
+Non. Cela crée une **facture BROUILLON** liée au dossier. Vous la vérifiez et l'envoyez depuis le module Comptabilité.
 
-> **Stockage en base PostgreSQL (BYTEA)** : les fichiers joints et les pieces jointes des notes (base64 dans JSON) **gonflent la base de donnees**.
+**Q13. Pourquoi mon extra ne peut-il pas être facturé ?**
+Deux raisons fréquentes : le dossier n'a **pas de client** rattaché, ou l'extra n'est **pas au statut Approuvé** (ou son montant est nul). Un extra déjà **Facturé** est verrouillé et ne peut plus être modifié ou supprimé.
 
-Implications :
-- Backups DB peuvent etre volumineux (chaque GB de fichiers = +1 GB sur le backup).
-- Performance : preferer plusieurs petits fichiers a un seul gros fichier de 150 MB.
-- Pas de versionnement automatique des fichiers (un upload = nouveau record).
+**Q14. Quelle est la différence entre les deux assistants IA ?**
+L'**assistant Dossiers** (bouton de la liste) est en **lecture seule** : il répond à vos questions sans rien modifier, et ne lit pas le contenu des fichiers. L'**assistant Extras** (onglet Extras) peut **agir** sur les extras (créer, changer le statut, facturer…), mais **seulement après votre confirmation**.
 
-### 5.7 FAQ
+**Q15. Les outils IA sont-ils facturés ?**
+Oui. Enrichir une note, analyser une photo, résumer les notes, et les deux assistants consomment des **crédits IA prépayés** (coût réel du modèle + marge de 30 %). Sans crédits suffisants, l'action est refusée (402).
 
-**Q : Combien de fichiers maximum par dossier ?**
-R : Pas de limite hard-codee. Limite pratique : taille DB. Taille max **par fichier** : 150 MB.
+**Q16. Y a-t-il une liste de vérification des étapes dans le dossier ?**
+Pas dans l'interface actuelle : le serveur sait gérer des étapes, mais aucun onglet ne les affiche. C'est une fonctionnalité dormante.
 
-**Q : Les fichiers sont-ils anti-virus scannes a l upload ?**
-R : NON. Aucun scan AV automatique. L utilisateur est responsable de la securite des fichiers uploades.
+**Q17. Puis-je exporter la liste des dossiers en PDF ou CSV ?**
+Non. Le module ne propose **aucun export, aucune impression, aucune action en lot**. Les seules sorties de fichiers sont le téléchargement d'une pièce jointe et le partage public par lien.
 
-**Q : Comment partager le dossier avec un sous-traitant pour qu il telecharge les plans ?**
-R : Generer un lien public (Partager -> Generer lien public). Le sous-traitant accede via l URL `/dossiers/public/{token}` sans authentification. Lecture seule des documents. Expiration 90 jours.
+**Q18. Jusqu'à combien de niveaux de répertoires puis-je créer ?**
+**5 niveaux** (la racine comptant pour le premier). Au 5ᵉ niveau, le bouton « Nouveau sous-répertoire » est désactivé.
 
-**Q : Le client peut-il uploader un fichier via le lien public ?**
-R : NON. Lecture seule. Pour permettre l upload client, utiliser le module B2B Portal (separe).
+**Q19. Un extra saisi sur le mobile apparaît-il ici ?**
+Oui. La table des extras est **partagée** entre le web et l'application mobile de chantier : les deux voient les mêmes avenants.
 
-**Q : Comment savoir si le client a consulte le lien public ?**
-R : Bouton Partager -> stats `totalViews`, `totalDownloads`, `lastViewedAt` (camelCase frontend). Pas de notification email auto.
-
-**Q : Que se passe-t-il quand le token expire (apres 90 jours) ?**
-R : L URL retourne HTTP 404 ou message « Lien expire ». Pour reactiver, generer un nouveau token (l ancien est invalide).
-
-**Q : Peut-on prolonger l expiration au-dela de 90 jours ?**
-R : Non via UI. La duree est codee en dur (`expires_days=90` dans `_register_dossier_token`). Modification necessite changement de code.
-
-**Q : Si je supprime un dossier, les devis/projets lies sont-ils supprimes aussi ?**
-R : NON. Les items lies (devis, projets, BT, BC, factures) restent en base. Seuls les **liens** dans les tables de jointure sont supprimes (et les notes + documents joints du dossier).
-
-**Q : Les notes IA enrichies sont-elles facturees plusieurs fois si je rafraichis ?**
-R : Chaque appel IA est facture independamment. Pour eviter la double facturation, l UI ne propose pas de bouton « Re-enrichir » sur une note deja enrichie (verifier le code en prod si necessaire).
-
-**Q : Comment faire une recherche full-text dans toutes les notes du dossier ?**
-R : Pas de recherche full-text dans cette version. Filtrer par categorie ou utiliser la fonction « Generer resume IA » pour avoir une vue d ensemble.
-
-**Q : Les notes peuvent-elles avoir des @mentions vers des employes ?**
-R : NON. Pas de fonctionnalite mentions/notifications dans cette version.
-
-**Q : Peut-on dupliquer un dossier (template) ?**
-R : NON. Pas de fonction Dupliquer. Recreer manuellement un nouveau dossier.
-
-**Q : Les onglets Pointage et Comptabilite affichent-ils des donnees en temps reel ?**
-R : OUI. Le contenu est calcule a la volee depuis les tables `time_entries` (pointages) et `journal_entries` (comptabilite) filtres par `project_id` du dossier.
-
-**Q : Pourquoi le menu sidebar parle de « Dossiers » mais le router parle de `/documents` ?**
-R : Heritage historique du code. Le terme « documents » dans le router fait reference au concept original (documents = dossiers) ; le frontend a renomme « Dossiers » pour clarte. La table SQL est bien `dossiers`.
-
-**Q : Les categories de notes IA sont-elles modifiables (custom) ?**
-R : NON. Les 6 categories sont codees en dur dans `_NOTE_CATEGORIES`. L IA selectionne parmi cette liste ; les utilisateurs peuvent aussi assigner manuellement.
-
-**Q : Le dossier conserve-t-il l historique des modifications (audit log) ?**
-R : NON dans cette version. Seuls `created_at` et `updated_at` sont stockes. Pas d audit log par champ.
+**Q20. Mon compte est en « Mode consultation » — que puis-je faire ?**
+Vous pouvez **tout consulter**, mais aucune écriture n'est acceptée (création, téléversement, notes, extras, IA renvoient 403). Régularisez l'abonnement Stripe (module Configuration) pour revenir en écriture. Les liens publics déjà partagés continuent de fonctionner tant que l'entreprise reste active.
 
 ---
 
-## 6. Recap one-pager
+## 6. Récapitulatif
 
-- **Format** : `DOS-YYYY-NNNNN` (annee + 5 chiffres). Race-safe.
-- **5 statuts** : OUVERT (defaut) / EN_COURS / EN_ATTENTE / TERMINE / ARCHIVE.
-- **5 types** : CLIENT / PROJET (defaut) / CHANTIER / ADMINISTRATIF / FINANCIER.
-- **4 priorites** : BASSE / NORMAL / HAUTE / URGENTE (defaut NORMAL).
-- **12 onglets Fiche 360** : Resume, Soumissions, Projet, Bons de travail, Achats, Demandes de prix, Factures, Pointage, Comptabilite, Documents, Notes, Liens.
-- **Documents** : table `attachments` BYTEA blob, max **150 MB**, 10 categories.
-- **Notes** : table `dossier_notes`, 6 categories, attachments inline base64, 3 actions IA (enrich/photo/summary) avec Claude Sonnet 4.6.
-- **Liens** : 5 tables de jointure (`dossier_devis`, `dossier_projets`, `dossier_formulaires` pour BT+DP, `dossier_achats`, `dossier_factures`).
-- **Auto-link** : UNIQUEMENT depuis CRM opportunite -> dossier (1 cas). Tous les autres = manuels.
-- **Public sharing** : token 90j (codee en dur), lecture seule, documents uniquement, sans auth.
-- **Cascade delete** : DELETE notes + attachments + tous les liens. SET NULL sur opportunities. Items lies (devis/projets/BC/factures) preserves.
-- **Pas de Kanban**, **Pas de Calendrier**, **Pas de Messages**, **Pas de Dupliquer**, **Pas d audit log**, **Pas de scan antivirus**.
-- **Stockage en base** : pas de S3/Azure. Dimensionner les backups en consequence.
+- **Un dossier = une Fiche 360°** : autour d'un chantier/client, il relie soumissions, projet, bons de travail, achats, demandes de prix, factures, pointage, comptabilité, documents, notes, liens et **extras**.
+- **Trois écrans** : liste (`/dossiers`), Fiche 360 (`/dossier/:id`, **au singulier**), page publique (`/dossiers/public/:token`, sans compte).
+- **13 onglets** dans la Fiche 360 ; **pas** d'onglet « Étapes » (fonction dormante), la gestion des partages est dans l'onglet **Documents**.
+- **Numérotation** : dossier `DOS-AAAA-NNNNN`, extra `EXT-XXXX`, facture d'extra `FACT-AAAA-NNNNN` — tous générés sans risque de doublon.
+- **Permissions ouvertes** : tout compte du locataire gère les dossiers ; **seule** la **facturation d'un extra** est réservée aux administrateurs/comptables. Le **mode consultation** (Stripe) met tout le module en lecture seule.
+- **Documents** : arborescence jusqu'à **5 niveaux**, fichiers **150 Mo** en base (`BYTEA`), déplacement/copie même entre dossiers, aperçu sécurisé.
+- **Partage** : lien de **dossier entier** (90 j, lecture) ou lien de **répertoire** avec **niveau** (Lecteur seul / Lecture + téléchargement / Contributeur) et **expiration** (30 j / 90 j / Jamais). Le niveau **Contributeur** autorise le dépôt de fichiers par un invité.
+- **Notes** : catégories, épinglage, pièces jointes (images/audio/fichiers), et **3 outils IA** (enrichir, analyser une photo, résumer).
+- **Extras (avenants)** : cycle Proposé → Approuvé → Facturé ; **facturer** crée une facture BROUILLON liée au dossier ; un extra facturé est verrouillé ; totaux conscients des avoirs et des brouillons.
+- **Deux assistants IA distincts** : Dossiers (**lecture seule**, ne lit pas les fichiers) et Extras (**proposer → confirmer**, droits revérifiés). Modèle `claude-sonnet-4-6`, crédits prépayés + marge 30 %.
+- **Ce que le module ne fait pas** : pas de catégorie au téléversement, pas de bouton « Archiver », pas d'export/impression/lot, pas d'envoi automatique de facture, pas d'onglet Étapes.
+- **Suppression en cascade** : efface pièces jointes/notes/étapes/liens/extras/liaisons, purge les partages, **détache** opportunités et projets ; les éléments liés (devis/BT/BC/factures) sont préservés.
 
 ---
 
-**Documentation generee a partir du code** : `documents.py` (router), `DossiersPage.tsx` (liste), `DossierDetailPage.tsx` (Fiche 360), `DossierPublicPage.tsx` (vue publique), `documents.ts` (api client).
+*Sources vérifiées (2026-07)* : `backend/routers/documents.py` (6138 lignes, 58 routes) · `backend/routers/dossiers_ai.py` (327 lignes, 1 route) · `backend/routers/dossier_ai.py` (772 lignes, 2 routes) · montage `erp_api.py:993` (documents), `1021` (dossiers_ai), `1137-1138` (dossier_ai, bloc défensif) · `frontend/src/pages/DossiersPage.tsx` (428 lignes) · `frontend/src/pages/DossierDetailPage.tsx` (3911 lignes, 13 onglets) · `frontend/src/pages/DossierPublicPage.tsx` (561 lignes) · `frontend/src/components/dossiers/{DossiersAssistantTab.tsx, ExtrasAssistant.tsx}` · `frontend/src/api/{documents.ts, dossiersAi.ts}` · Sidebar `Sidebar.tsx:51` (groupe « Gestion ») · i18n `dossiers.json`, `dossiersAssistant.json`.
 
-**Manuels lies** :
-- Module 3 (CRM — opportunites) — `03-crm.md`
-- Module 4 (Devis) — `04-devis.md`
-- Module 5 (Bons de Travail) — `05-bons-de-travail.md`
-- Module 6 (Bons de Commande) — `06-bons-de-commande.md`
-- Module 7 (Factures / Comptabilite) — `07-factures.md`
-- Module 25 (IA / Assistant) — `12-ia.md`
+*Manuels liés* : 06 — Ventes (CRM) · 08 — Soumissions · 09 — Projets · 12 — Bons de travail · 13 — Pointage · 14 — Bons de commande · 15 — Comptabilité · 25 — Assistant IA · 28 — Configuration.
+
+*Manuel ERP Constructo AI — Module 07 Dossiers (gestion documentaire / Fiche 360) — v3.0 vérifié — 2026-07*
