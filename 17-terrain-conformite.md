@@ -1,703 +1,801 @@
-# Module 17 — Conformite RBQ / CCQ
+# Module 17 — Conformité RBQ / CCQ
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/conformite.py` (2247 lignes), `backend/routers/conformite_data.py` (donnees de reference RBQ/CCQ/CNESST), `frontend/src/pages/ConformitePage.tsx` (5 onglets), `frontend/src/api/conformite.ts`, `frontend/src/store/useConformiteStore.ts`
-> **Tables PostgreSQL** : `conformite_licences_rbq`, `conformite_cartes_ccq`, `conformite_attestations` (avec `fichier_data` BYTEA pour pieces jointes)
-> **Cadrage** : module **Conformite reglementaire Quebec construction** — gere les licences RBQ (Regie du batiment du Quebec), les cartes de competence CCQ (Commission de la construction du Quebec) et les attestations fiscales/sectorielles (Revenu Quebec, ARC, CNESST, CCQ, RBQ). Inclut un assistant IA Claude Opus 4.7 specialise reglementation Quebec (7 endpoints).
-> **Acces** : Sidebar -> **Conformite RBQ/CCQ** (icone Shield), URL `/conformite`.
+> **Version** : 3.0 (refonte vérifiée ligne par ligne contre le code source du 7 juillet 2026 — correction du nombre de catégories RBQ, des libellés d'onglets réels, du modèle IA, des permissions et des barèmes de score)
+> **Libellé dans le menu** : « RBQ/CCQ » (clé `nav.rbqCcq`), groupe « TERRAIN » de la barre latérale, icône `Shield` — route `/conformite`
+> **Code de référence (backend)** : `ERP_REACT/backend/routers/conformite.py` (2531 lignes, 31 points d'accès dont 7 outils IA) ; `ERP_REACT/backend/routers/conformite_data.py` (398 lignes, **module de données statiques pur — ce n'est PAS un router monté**, aucun point d'accès)
+> **Code de référence (frontend)** : `ERP_REACT/frontend/src/pages/ConformitePage.tsx` (3164 lignes, 6 onglets) ; `ERP_REACT/frontend/src/api/conformite.ts` (587 lignes) ; `ERP_REACT/frontend/src/store/useConformiteStore.ts` (740 lignes, magasin Zustand)
+> **Chemin d'API réel** : `/api/erp/v1/conformite` (préfixe `/conformite` monté avec `API_PREFIX = /api/erp/v1`)
+> **Tables PostgreSQL (une par tenant, créées à la demande)** : `conformite_licences_rbq`, `conformite_cartes_ccq`, `conformite_attestations` (colonne `fichier_data` BYTEA pour les pièces jointes)
+> **Modèle IA** : Claude Opus 4.8 (`claude-opus-4-8`), 32 000 jetons maximum par appel, facturé aux crédits IA prépayés du tenant
+> **Cadrage** : registre documentaire **manuel** de la conformité réglementaire québécoise en construction — licences RBQ de l'entreprise, cartes de compétence CCQ des employés, attestations fiscales et sectorielles (avec pièce jointe), un tableau de bord (score, indicateurs, alertes d'expiration) et un assistant IA spécialisé. Le module **ne se connecte à aucun registre officiel** : toute la saisie est faite à la main.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface (5 onglets)](#2-interface-5-onglets)
-3. [Workflows pas-a-pas](#3-workflows-pas-a-pas)
-4. [Reference](#4-reference)
-5. [Integrations & FAQ](#5-integrations--faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
 ### 1.1 Mission du module
 
-Centraliser la **gestion documentaire reglementaire** d une entreprise de construction au Quebec :
+Centraliser, dans un seul écran, la **gestion documentaire réglementaire** d'une entreprise de construction au Québec, afin d'éviter les ruptures de conformité (licence expirée, carte de compétence échue, attestation fiscale périmée) qui empêchent de facturer, de soumissionner ou de démarrer un chantier.
 
-- **Licences RBQ** : numero, sous-categories (26 codes officiels du 1.1 au 16), date d expiration, cautionnement, assurance responsabilite civile, statut.
-- **Cartes de competence CCQ** : carte par employe, metier principal (28 metiers), qualification dynamique (Compagnon / Apprenti X periode / Classe N), heures cumulees, formation ASP Construction.
-- **Attestations** : 5 types reglementaires (Revenu Quebec, ARC, CNESST, CCQ, RBQ) avec piece jointe PDF/image en base (BYTEA, max 10 Mo).
-- **Tableau de bord** : score global 0-100, KPIs, repartitions par categorie/metier/type, alertes auto (60 jours licences/cartes, 30 jours attestations).
-- **Verifications projet IA** : exigences reglementaires d un projet (licences requises, metiers CCQ, permis, attestations, cautionnement minimum, ratio compagnon/apprenti).
-- **7 endpoints IA Claude Opus 4.7** : analyser conformite, chat expert, verifier exigences projet, rechercher reglementations, predire renouvellements, generer rapport, recommander formations.
-- **Resources** : 8 organismes officiels (RBQ, CCQ, CNESST, Revenu Quebec, ARC, ASP Construction, Ombudsman, CMEQ) + 6 sections de conseils pratiques.
+Le module répond à quatre besoins concrets :
 
-### 1.2 Pourquoi c est important (contexte legal Quebec)
+- « Quelles licences RBQ mon entreprise détient-elle, et lesquelles arrivent à échéance ? »
+- « Quels employés ont une carte de compétence CCQ valide, et pour quel métier ? »
+- « Mes attestations fiscales (Revenu Québec, ARC, CNESST) sont-elles à jour, et où est le PDF ? »
+- « Suis-je globalement conforme ? » (score, alertes et diagnostics IA)
 
-- **RBQ (Regie du batiment du Quebec)** : delivre les licences obligatoires aux entrepreneurs (Loi sur le batiment, chapitre B-1.1). Aucun travail facture ne peut etre execute sans licence couvrant la sous-categorie correspondante. Sanctions : amendes, suspension, revocation.
-- **CCQ (Commission de la construction du Quebec)** : gere les cartes de competence des travailleurs (Loi R-20). Chaque travailleur sur un chantier R-20 doit detenir une carte valide. Renouvellement selon heures travaillees. Ratio compagnon/apprenti obligatoire.
-- **CNESST** : delivre l attestation de conformite obligatoire avant chaque debut de chantier et tout paiement client.
-- **Revenu Quebec et ARC** : delivrent les attestations fiscales exigees pour soumettre des appels d offres.
+### 1.2 Ce que le module gère (contexte légal québécois)
 
-Ce module evite les ruptures de conformite en alertant en amont et en centralisant les pieces justificatives.
+- **Licences RBQ (Régie du bâtiment du Québec)** : la RBQ délivre aux **entreprises** entrepreneures les licences obligatoires prévues par la Loi sur le bâtiment (chapitre B-1.1). Le module enregistre le numéro de licence, les sous-catégories couvertes (**27 codes officiels du 1.1 au 16**), les dates d'émission et d'expiration, le cautionnement, l'assurance responsabilité civile et le statut.
+- **Cartes de compétence CCQ (Commission de la construction du Québec)** : la CCQ gère les cartes des **travailleurs individuels** sous le régime de la Loi R-20. Le module associe une carte à un employé, avec le métier principal (**28 métiers**), une qualification (Compagnon, Apprenti par période, ou Classe), les heures accumulées et la formation ASP Construction.
+- **Attestations (5 types)** : documents à durée limitée exigés pour soumissionner ou démarrer — Revenu Québec, Agence du revenu du Canada (ARC), CNESST, CCQ (état de situation) et attestation de solvabilité RBQ. Chaque attestation peut recevoir **une** pièce jointe PDF ou image stockée en base.
+- **Tableau de bord** : score de conformité de 0 à 100, indicateurs clés, alertes d'expiration et répartitions par catégorie, métier et type.
+- **Assistant IA** : sept outils propulsés par Claude Opus 4.8, spécialisés en réglementation RBQ/CCQ du Québec.
 
-### 1.3 Ce que le module ne fait PAS
+### 1.3 Ce que le module fait (vérifié contre le code)
 
-- **Pas de paie** : les heures CCQ servent uniquement de seuil de renouvellement, pas de base de calcul (voir Module 11 Employes).
-- **Pas d API directe RBQ / CCQ** : pas d appel automatique au registre RBQ ni au portail CCQ employeur. Saisie manuelle (ou par verification IA).
-- **Pas de declarations mensuelles CCQ** : le module **ne genere ni ne transmet** les rapports mensuels d heures travaillees. Utiliser le portail CCQ employeur officiel.
-- **Pas de charges sociales CCQ** (vacances, jours feries, fonds de pension) : a gerer via Module Paie / Employes ou solution externe.
-- **Pas de subventions / formations financees** : voir Module 18 Subventions.
-- **Pas de calendrier iCal / Google Calendar** : alertes visibles uniquement dans le tableau de bord.
-- **Pas de signature electronique** ni de workflow d approbation interne.
+- Tenir un **registre CRUD** (créer, lire, modifier, supprimer) des licences RBQ, des cartes CCQ et des attestations, chacun avec ses filtres (statut, catégorie/métier/type, recherche texte).
+- Attacher **un** fichier (PDF, JPG, PNG ou WebP, jusqu'à 10 Mo) à chaque attestation, puis le **télécharger** au besoin.
+- Calculer un **score de conformité** et afficher un **badge coloré** en tête de page (vert ≥ 80 %, jaune ≥ 50 %, rouge < 50 %).
+- Produire des **alertes d'expiration** consultables dans le tableau de bord (licences et cartes à 60 jours, attestations à 30 jours par leur point d'accès dédié).
+- Offrir un **assistant IA** à sept outils : analyse de conformité, chat réglementaire, vérification des exigences d'un projet, recherche de réglementation, prédiction des renouvellements, génération d'un rapport et recommandation de formations.
+- Fournir un onglet de **vérification des exigences réglementaires d'un projet** (licences requises, métiers CCQ, permis, attestations, cautionnement et assurance minimums, ratio compagnon/apprenti).
 
-### 1.4 Acces
+### 1.4 Ce que le module NE fait PAS (limites importantes)
 
-- Sidebar -> **Conformite RBQ/CCQ** (icone Shield).
-- URL : `/conformite`.
-- Onglet par defaut : **Licences RBQ**.
-- 5 onglets principaux (cf. section 2).
+> **À lire avant de vous fier au module.** Plusieurs attentes naturelles ne sont **pas** couvertes. Ce module est un registre de saisie, pas un connecteur officiel.
 
-### 1.5 Permissions
+- **Aucune vérification en temps réel** contre les registres officiels de la RBQ ou de la CCQ. Tout est saisi à la main. Le nom de l'entreprise inscrit sur une licence est un **champ texte libre**, il n'est pas tiré du profil du tenant.
+- **Aucune déclaration mensuelle d'heures CCQ.** Le champ « heures accumulées » est un cumul manuel, pas un journal mensuel. Utilisez le portail employeur de la CCQ pour les déclarations officielles.
+- **Aucune exportation ni impression** des données de conformité : pas de PDF, pas de CSV, pas de bouton d'impression. Le **seul** téléchargement possible est la pièce jointe d'une attestation. Même le **rapport IA est affiché à l'écran seulement** (aucun export, aucune sauvegarde).
+- **Aucun import en masse** : pas de téléversement CSV de licences ou de cartes ; chaque enregistrement se saisit un par un.
+- **Résultats IA éphémères.** La vérification de projet, l'analyse, le rapport, la recherche et les prédictions ne sont **pas sauvegardés** : ils disparaissent au rechargement de la page ou au changement d'onglet.
+- **Alertes uniquement dans l'application.** Aucun rappel par courriel, par notification ou par calendrier (iCal, Google Agenda). Les alertes vivent dans le tableau de bord.
+- **Pièce jointe unique par attestation** : pas de multi-fichiers, pas de gestion de versions.
+- **Pas de paie ni de cotisations CCQ** : les heures servent de repère de renouvellement, pas de base de calcul salarial (voir Module 13 Pointage et Module 11 Employés).
+- **Pas de signature électronique** ni de flux d'approbation interne.
+- **Onglets « fantômes » de l'ancien héritage Streamlit** : certaines clés d'affichage (CSST, formations de saisie, colonnes « responsable » d'audit) existent dans les fichiers de traduction mais **ne sont rendues nulle part** dans l'interface React. La « formation » n'existe ici que comme **recommandation IA** ; « Audits et inspections » est en réalité l'onglet de **vérification IA d'un projet** (voir la mise en garde sur les libellés en 2.1).
 
-- Tous les utilisateurs authentifies du tenant peuvent CRUD les licences, cartes et attestations.
-- **IA** : guardee par `_check_credits()` + `check_ai_guard()` — verifie le solde de credits prepayes IA avant chaque appel. Sans credits : HTTP 402 (Payment Required).
-- Pas de roles dedies « responsable conformite » / « directeur RH ». Bonne pratique : convenir en interne d un responsable unique pour eviter les modifications concurrentes.
+### 1.5 Accès par le menu latéral
+
+- Barre latérale gauche → groupe **TERRAIN** (repliable) → **RBQ/CCQ** (icône `Shield`). Réf. `Sidebar.tsx:72`.
+- URL directe : `/conformite`.
+- Fil d'Ariane et titre de la barre supérieure : « RBQ/CCQ ».
+- Titre affiché en haut de la page : « **Conformité RBQ / CCQ** », sous-titre « **Suivi des licences, formations et obligations légales** ».
+- **Onglet ouvert par défaut** : **Licences RBQ** (état initial du composant, `ConformitePage.tsx:158`), même si l'onglet « Tableau de bord » apparaît en premier dans la barre d'onglets.
+
+### 1.6 Permissions et rôles
+
+Les droits ne sont **pas** les mêmes pour tout le monde — c'est une correction importante par rapport aux versions antérieures de ce manuel.
+
+| Action | Qui peut la faire | Garde technique |
+|--------|-------------------|-----------------|
+| **Consulter** licences, cartes, attestations, statistiques, alertes | Tout utilisateur connecté au tenant | `get_current_user` |
+| Télécharger la pièce jointe d'une attestation | Tout utilisateur connecté au tenant | `get_current_user` |
+| **Créer / modifier / supprimer une licence RBQ** | Administrateur du tenant | `require_tenant_admin_or_role()` |
+| **Créer / modifier / supprimer une carte CCQ** | Administrateur du tenant | `require_tenant_admin_or_role()` |
+| **Créer / modifier / supprimer / téléverser une attestation** | Administrateur **ou** rôle « comptable » | `require_tenant_admin_or_role("comptable")` |
+| **Utiliser les 7 outils IA** | Tout utilisateur connecté, **si le tenant a des crédits IA** | crédits prépayés (voir ci-dessous) |
+
+- Le statut « administrateur » est **relu côté serveur** (`is_admin`) à chaque requête : il ne peut pas être falsifié depuis le navigateur.
+- Les **outils IA consomment des crédits IA prépayés** du tenant. Le serveur vérifie d'abord la disponibilité du service (sinon erreur 503), puis un garde de facturation, puis le solde de crédits : un solde épuisé renvoie une erreur **402** affichée dans la bannière rouge. Le super-administrateur et les sociétés exemptées ne sont pas bloqués par ce contrôle.
+- Toutes les données sont **strictement cloisonnées par tenant** (schéma PostgreSQL propre à l'entreprise). Aucun accès entre tenants n'est possible.
+- Il n'existe **pas** de rôle dédié « responsable conformité ». Bonne pratique interne : désigner une seule personne responsable de la saisie pour éviter les modifications concurrentes.
+
+### 1.7 Les six onglets du module
+
+| # | Onglet (libellé affiché) | Contenu réel | Icône |
+|---|--------------------------|--------------|-------|
+| 1 | **Tableau de bord** | Score, indicateurs, alertes, répartitions, ressources | `BarChart3` |
+| 2 | **Licences RBQ** (N) | Registre CRUD des licences RBQ | `Shield` |
+| 3 | **Cartes CCQ** (N) | Registre CRUD des cartes de compétence par employé | `UserCheck` |
+| 4 | **Documents légaux** (N) | **En réalité : les attestations fiscales et sectorielles** | `FileText` |
+| 5 | **Audits et inspections** | **En réalité : la vérification IA des exigences d'un projet** | `CheckCircle2` |
+| 6 | **Assistant IA** | Six outils IA (analyse, chat, recherche, prédiction, rapport, formations) | `Sparkles` |
+
+Le nombre entre parenthèses est un **compteur en direct** (nombre de licences, de cartes, d'attestations). En affichage mobile, les libellés sont abrégés : Dash / RBQ / CCQ / Attest. / Verif. / IA.
+
+> **Mise en garde sur deux libellés trompeurs.** L'onglet **« Documents légaux »** contient exactement les **attestations** (Revenu Québec, ARC, CNESST, CCQ, RBQ). L'onglet **« Audits et inspections »** ne gère aucun audit : c'est l'outil de **vérification IA d'un projet**. Ces deux libellés sont des héritages de l'ancienne version Streamlit et ne décrivent pas fidèlement le contenu. Le présent manuel utilise les libellés affichés, mais précise chaque fois le contenu réel.
 
 ---
 
-## 2. Interface (5 onglets)
+## 2. Interface
 
-Source : `ConformitePage.tsx:127-133` — tableau `tabs` avec compteurs dynamiques.
+### 2.0 Éléments communs à tous les onglets
 
-| # | Cle             | Label                       | Icone           | Contenu principal                                                |
-|---|-----------------|-----------------------------|-----------------|------------------------------------------------------------------|
-| 1 | `rbq`           | Licences RBQ (N)            | Shield          | CRUD licences + 26 sous-categories + filtres                     |
-| 2 | `ccq`           | Cartes CCQ (N)              | UserCheck       | CRUD cartes + 28 metiers avec qualifications dynamiques          |
-| 3 | `attestations`  | Attestations (N)            | FileText        | CRUD attestations + televersement PDF/image (5 types)            |
-| 4 | `verifications` | Verifications               | CheckCircle2    | Assistant IA — exigences reglementaires d un projet              |
-| 5 | `dashboard`     | Tableau de bord             | BarChart3       | KPI + score conformite + alertes + repartitions + ressources     |
+- **Badge de score global** : à droite du titre de page, un badge coloré affiche le pourcentage de conformité (vert ≥ 80 %, jaune ≥ 50 %, rouge < 50 %). Il est calculé par le point d'accès `GET /conformite/statistics`.
+- **Bannières** : une bannière rouge affiche les erreurs ; une bannière verte confirme les succès (elle se masque seule après environ 4 secondes).
+- **Écran d'erreur de démarrage** : si les données de référence (catégories, métiers, etc.) n'arrivent pas à charger, la page affiche « Impossible de charger le module Conformité » avec un bouton **« Réessayer »**.
+- **Barre de commandes** : chaque onglet de registre (Licences, Cartes, Documents légaux) possède une barre avec un bouton primaire de création, un champ de recherche (avec un délai de 400 ms avant l'envoi) et des menus déroulants de filtre.
+- **Suppression** : chaque suppression demande une confirmation par une petite fenêtre native du navigateur (« Supprimer cette licence ? », etc.).
 
-L en-tete affiche un **badge global de score conformite** (vert >= 80%, jaune >= 50%, rouge < 50%) calcule par l endpoint `/conformite/statistics`.
+### 2.1 Onglet « Tableau de bord »
 
-### 2.1 Onglet « Licences RBQ »
+Écran de synthèse. Il recharge ses statistiques et ses alertes à chaque affichage.
 
-Source : `ConformitePage.tsx:194-426` (composant `RbqTab` + modale `LicenceModal`).
+**Quatre indicateurs clés (cartes du haut)**
 
-**Tableau** :
-- Numero de licence (texte, mono, unique sur le tenant)
-- Nom de l entreprise titulaire de la licence
-- Categories (badges, max 3 affichees + compteur `+N`)
-- Cautionnement (formate fr-CA, en dollars)
-- Date d expiration
-- Statut (badge colore selon expiration et statut)
-- Actions : Modifier / Supprimer
+- **Licences RBQ actives** (avec le total en sous-titre : « N total »)
+- **Cartes CCQ actives**
+- **Attestations valides**
+- **Score de conformité** (pourcentage)
 
-**Filtres** :
-- Recherche texte (debounced 400 ms) sur `nom_entreprise` et `numero_licence` (ILIKE escape `\`).
-- Statut (`ACTIVE` / `SUSPENDUE` / `EXPIREE` / `REVOQUEE`).
-- Sous-categorie RBQ (1 parmi 26 codes).
+**Trois indicateurs d'alerte**
 
-**Modale Creation / Edition** :
-- Numero de licence * (max 100 caracteres, unique en base)
-- Nom de l entreprise * (max 255 caracteres)
-- Selecteur **Categories RBQ** (checkbox multi, scrollable, code + label + groupe affiches)
-- Date d emission, Date d expiration (Pydantic `date`, valide YYYY-MM-DD)
-- Statut (defaut `ACTIVE`)
-- **Cautionnement** (en $, plage 0 a 1 000 000 000)
-- **Assurance responsabilite** (en $, plage 0 a 1 000 000 000)
-- Notes (textarea, max 5000 caracteres)
+- **À renouveler (60 jours)** : somme des licences, cartes et attestations qui expirent dans les 60 prochains jours.
+- **Expirés** : somme des éléments déjà expirés.
+- **Cautionnement total** : somme des cautionnements enregistrés sur les licences, en dollars.
 
-**Validation cote backend** :
-- `date_emission <= date_expiration` (sinon HTTP 422).
-- Statut hors enum -> HTTP 400.
-- Doublon numero -> HTTP 409 (conflit).
+**Liste « Alertes de conformité »**
 
-> **Astuce groupes** : les 26 sous-categories sont organisees en groupes logiques (Generale, Mecanique, Electricite, Genie civil, Structure, Enveloppe, Finition) — utiliser le label de groupe pour s assurer que la licence couvre tout le perimetre du chantier.
+Jusqu'à 30 alertes, chacune avec un badge de priorité, un message en clair et une date. Si tout est à jour : « Aucune alerte - Tous les documents sont à jour ». Les alertes proviennent du point d'accès `GET /conformite/alertes` (voir la section 4.9 pour les fenêtres exactes).
 
-### 2.2 Onglet « Cartes CCQ »
+**Trois répartitions**
 
-Source : `ConformitePage.tsx:612-1056` (composant `CcqTab` + modale `CarteModal`).
+- Répartition **par catégorie** (licences RBQ)
+- Répartition **par métier** (cartes CCQ)
+- Répartition **par type** (attestations)
 
-**Tableau** :
-- Employe (jointure `employees` si la table existe — sinon affiche `#employeeId`)
-- Numero de carte (texte, mono, unique)
-- Metier principal (1 parmi 28)
-- Qualification (`Compagnon` / `Apprenti X periode` / `Classe N`)
-- Heures totales travaillees
-- ASP (badge si formation ASP Construction valide)
-- Date de renouvellement
-- Statut (badge colore)
-- Actions : Modifier / Supprimer
+Chaque répartition affiche un décompte par valeur (jusqu'à 10 lignes pour les licences et les cartes).
 
-**Filtres** :
-- Recherche texte sur `numero_carte` et `metier_principal`.
-- Statut (`ACTIVE` / `SUSPENDUE` / `EXPIREE`).
-- Metier (1 parmi 28).
+**Ressources** (si elles sont chargées)
 
-**Modale Creation / Edition** :
-- ID Employe * (FK vers `employees.id` — valide existence si la table employees existe). **Verrouille en edition**.
-- Numero de carte * (max 100 caracteres, unique)
-- Metier principal (selecteur dynamique 28 metiers)
-- Qualification (selecteur dynamique selon metier — auto-selection `qualifications[0]` au changement de metier)
-- **Metiers additionnels** (checkbox multi, exclut le metier principal)
-- Heures totales (entier, plage 0 a 1 000 000)
-- Date d emission, Date de renouvellement
-- **ASP Construction** (boolean — formation sante-securite obligatoire pour entrer sur un chantier)
-- Statut (defaut `ACTIVE`)
-- Notes
+- **Organismes de référence** : 8 organismes officiels avec leur rôle et un contact (RBQ, CCQ, CNESST, Revenu Québec, ARC, ASP Construction, Ombudsman de la construction, CMEQ).
+- **Conseils pratiques** : 6 sections de trucs (surveiller les échéances, maintenir la conformité financière, gérer les cartes, préparer les démarrages, prévenir les sanctions, développer les compétences).
 
-**Qualifications dynamiques** (METIERS_CCQ) :
-- Plupart des metiers : `Compagnon` (1 niveau).
-- Apprenti : `1re periode`, `2e periode`, `3e periode`, `4e periode`.
-- Grutier : `Classe 1`, `Classe 2`, `Classe 3`, `Classe 4`.
-- Operateur d equipement lourd : `Classe 1` a `Classe 4`.
-- Soudeur : `Classe A`, `Classe B`, `Classe C`.
-- Soudeur en tuyauterie : `Classe A`, `Classe B`.
+### 2.2 Onglet « Licences RBQ »
 
-> **Bonne pratique heures CCQ** : la CCQ exige des seuils d heures pour passer d apprenti a compagnon. Mettre a jour `heures_totales` aux dates cles (apres chaque pointage paie ou trimestre) pour anticiper les transitions de qualification.
+**Barre de commandes** : bouton **« Nouvelle licence »**, champ de recherche, filtre **Statut** (« Tous les statuts » + les statuts) et filtre **Catégorie** (« Toutes les catégories »).
 
-### 2.3 Onglet « Attestations »
+**Tableau (ordinateur)** — colonnes :
 
-Source : `ConformitePage.tsx:1062-1483` (composant `AttestationsTab` + modales `AttestationModal` et `UploadAttestationModal`).
+| Colonne | Contenu |
+|---------|---------|
+| **Numéro** | Numéro de licence (police à chasse fixe) |
+| **Entreprise** | Nom de l'entreprise titulaire (texte libre) |
+| **Catégories** | Badges bleus (3 au maximum, puis « +N ») |
+| **Cautionnement** | Montant formaté « x xxx $ » ou « -- » |
+| **Expiration** | Date d'expiration |
+| **Statut** | Badge coloré (voir la règle ci-dessous) |
+| **Actions** | Icônes Modifier et Supprimer |
 
-**Tableau** :
-- Type (label depuis `TYPES_ATTESTATION` — ex. « Attestation de Revenu Quebec »)
-- Numero (mono)
-- Organisme delivreur (depuis `TYPES_ATTESTATION`)
-- Date d expiration
-- Statut (`VALIDE` / `EN_RENOUVELLEMENT` / `EXPIREE`)
-- Fichier : si televerse -> bouton **Telecharger** avec taille (Ko) ; sinon bouton **Televerser**
-- Actions : Modifier / Supprimer
+**Cartes (mobile)** : numéro, badge de statut, nom de l'entreprise, badges de catégories (4 au maximum), « Exp: {date} », liens Modifier et Supprimer.
 
-**Filtres** :
-- Recherche client-side (sur type, label, organisme, numero, notes).
-- Statut.
-- Type (5 types).
+**État vide** : icône bouclier + « Aucune licence RBQ enregistrée » + bouton « Ajouter une licence ». Si des filtres sont actifs et ne renvoient rien : « Aucun résultat pour ces filtres » + « Réinitialiser les filtres ».
 
-**5 types officiels** (TYPES_ATTESTATION) :
+**Règle de couleur du badge de statut** : rouge si la licence est expirée (ou statut EXPIREE / REVOQUEE) ; jaune si elle expire dans 60 jours ou moins, ou si elle est SUSPENDUE ou EN_RENOUVELLEMENT ; vert si elle est ACTIVE.
 
-| Code           | Label                                                  | Organisme                              | Description                  |
-|----------------|--------------------------------------------------------|----------------------------------------|------------------------------|
-| `REVENU_QUEBEC`| Attestation de Revenu Quebec                          | Revenu Quebec                          | Conformite fiscale provinciale |
-| `ARC`          | Attestation de l Agence du revenu du Canada            | ARC                                    | Conformite fiscale federale    |
-| `CNESST`       | Attestation de conformite CNESST                       | CNESST                                 | Sante et securite au travail   |
-| `CCQ`          | Attestation CCQ — Etat de situation                    | Commission de la construction du Quebec | Etat des cotisations          |
-| `RBQ`          | Attestation de solvabilite RBQ                         | Regie du batiment du Quebec            | Solvabilite et cautionnement   |
+**Modale « Nouvelle licence RBQ » / « Modifier la licence RBQ »** — champs :
 
-**Modale Creation / Edition** :
-- Type * (selecteur 5 valeurs)
-- Numero * (max 100 caracteres — unicite en base sur la paire `(type, numero)`)
-- Date d emission, Date d expiration
-- Statut (defaut `VALIDE`)
-- Notes
+- **Numéro de licence** (obligatoire, exemple « 5734-1234-01 », 100 caractères maximum, **unique** dans le tenant)
+- **Nom de l'entreprise** (obligatoire, 255 caractères maximum, saisie manuelle)
+- **Catégories RBQ** (« {n} sélectionnées ») : liste de cases à cocher défilante affichant, pour chaque catégorie, « code — libellé (sous-groupe) »
+- **Date d'émission** / **Date d'expiration** (sélecteurs de date)
+- **Statut** (menu déroulant : ACTIVE, SUSPENDUE, EXPIREE, REVOQUEE)
+- **Cautionnement ($)** / **Assurance responsabilité ($)** (nombres, pas de 1000)
+- **Notes** (zone de texte, 5000 caractères maximum)
 
-**Modale Televersement** :
-- Types acceptes : **PDF, JPG, PNG, WebP**.
-- Taille maximum : **10 Mo**.
-- Le fichier est stocke dans la colonne BYTEA `fichier_data` ; nom sanitise (chars autorises : alpha-num, `._-()[] `).
-- Re-validation MIME a la lecture (defense en profondeur — fichier servi en `application/octet-stream` si MIME hors whitelist).
+**Validations** : le numéro et le nom sont obligatoires ; la date d'émission doit être antérieure ou égale à la date d'expiration ; un numéro déjà utilisé est refusé (erreur 409). Boutons « Annuler » et « Créer » (ou « Enregistrer » en modification).
 
-**Validation backend** :
-- Pas de fichier > 10 Mo (HTTP 413).
-- MIME hors whitelist : HTTP 415.
-- Doublon `(type, numero)` : HTTP 409.
+### 2.3 Onglet « Cartes CCQ »
 
-> **Astuce televersement** : preferer toujours le PDF original (machine-readable) plutot qu une photo de l attestation pour faciliter la verification par un client ou un audit.
+**Barre de commandes** : bouton **« Nouvelle carte »**, recherche, filtre **Statut** et filtre **Métier** (« Tous les métiers »).
 
-### 2.4 Onglet « Verifications » (Assistant IA)
+**Tableau (ordinateur)** — colonnes :
 
-Source : `ConformitePage.tsx:1489-1702` (composants `VerificationsTab` + `VerifyProjectResultPanel`).
+| Colonne | Contenu |
+|---------|---------|
+| **Employé** | Nom de l'employé (ou « #id » si la fiche est absente) |
+| **Numéro** | Numéro de carte (police à chasse fixe) |
+| **Métier** | Métier principal |
+| **Qualification** | Compagnon / Apprenti par période / Classe |
+| **Heures** | Heures accumulées (« x xxx h ») |
+| **ASP** | Badge vert « ASP » ou « -- » |
+| **Renouvellement** | Date de renouvellement |
+| **Statut** | Badge coloré |
+| **Actions** | Modifier et Supprimer |
 
-Formulaire de verification d exigences pour un projet :
+**État vide** : « Aucune carte CCQ enregistrée » + « Ajouter une carte ».
 
-- **Type de projet** (selecteur 7 valeurs : `Residentiel unifamilial`, `Residentiel multifamilial`, `Commercial`, `Industriel`, `Institutionnel`, `Renovation majeure`, `Agrandissement`)
-- **Valeur estimee** ($, entier ou decimal)
-- **Region** (selecteur 18 valeurs : 17 regions administratives Quebec + Autre region)
-- **Types de travaux** (checkbox multi parmi 12 : `Fondation`, `Charpente`, `Electricite`, `Plomberie`, `Chauffage/Ventilation`, `Toiture`, `Revetement exterieur`, `Finition interieure`, `Maconnerie`, `Structure metallique`, `Excavation`, `Piscine`)
+**Modale « Nouvelle carte CCQ » / « Modifier la carte CCQ »** — champs :
 
-Bouton **Verifier les exigences** -> appel `POST /conformite/ai/verify-project` (Claude Opus 4.7).
+- **Employé** :
+  - En **création** : un menu déroulant liste les employés **actifs** (jusqu'à 100). Si la liste est vide ou indisponible, l'interface bascule sur une **saisie manuelle de l'identifiant** de l'employé.
+  - En **modification** : l'employé est **verrouillé** (lecture seule) — on ne peut pas réaffecter une carte à un autre employé.
+- **Numéro de carte** (obligatoire, exemple « CCQ-12345 », 100 caractères maximum, **unique**)
+- **Métier** (menu déroulant, 28 métiers ; défaut « Apprenti »)
+- **Compétence** (menu déroulant dont les options **changent selon le métier** ; au changement de métier, la première qualification est sélectionnée automatiquement)
+- **Catégorie de compétence** (« {n} ») : cases à cocher des **métiers additionnels** (grille à deux colonnes ; le métier principal est exclu)
+- **Heures accumulées** (nombre, pas de 100)
+- **Date d'émission** / **Date d'expiration** (cette dernière sert de date de renouvellement)
+- **ASP Construction** (case à cocher)
+- **Statut** (menu déroulant : ACTIVE, SUSPENDUE, EXPIREE)
+- **Notes** (zone de texte)
 
-**Resultat affiche** (`AiVerifyProjectResult`) :
-- **Licences RBQ requises** : liste avec categorie + description + obligatoire/recommande (badge rouge/jaune)
-- **Metiers CCQ requis** : nom + nombre estime + qualification (compagnon/apprenti)
-- **Permis requis** : type + organisme (municipal / provincial)
-- **Attestations requises** : type + organisme + duree validite
+**Validations** : le numéro et le métier sont obligatoires ; l'identifiant de l'employé doit être supérieur à 0 ; si la table des employés existe, l'identifiant doit correspondre à un employé réel (sinon erreur 404 « Employé introuvable »).
+
+**Qualifications dynamiques par métier**
+
+| Métier | Qualifications proposées |
+|--------|--------------------------|
+| Apprenti | 1re période, 2e période, 3e période, 4e période |
+| Grutier | Classe 1, Classe 2, Classe 3, Classe 4 |
+| Opérateur d'équipement lourd | Classe 1, Classe 2, Classe 3, Classe 4 |
+| Soudeur | Classe A, Classe B, Classe C |
+| Soudeur en tuyauterie | Classe A, Classe B |
+| **Tous les autres métiers (23)** | Compagnon |
+
+### 2.4 Onglet « Documents légaux » (les attestations)
+
+> Rappel : malgré son libellé, cet onglet gère uniquement les **attestations** fiscales et sectorielles.
+
+**Barre de commandes** : bouton **« Nouvelle attestation »**, recherche (sur le type, l'organisme, le numéro et les notes), filtre **Statut** et filtre **Type**.
+
+**Tableau** — colonnes :
+
+| Colonne | Contenu |
+|---------|---------|
+| **Type** | Type d'attestation |
+| **Numéro** | Numéro (police à chasse fixe) |
+| **Organisme** | Organisme délivreur |
+| **Expiration** | Date d'expiration |
+| **Statut** | Badge (VALIDE, EN_RENOUVELLEMENT, EXPIREE) |
+| **Fichier** | Si une pièce jointe existe : bouton **Télécharger** (avec la taille en Ko) ; sinon : bouton **Téléverser** |
+| **Actions** | Modifier et Supprimer |
+
+**État vide** : « Aucune attestation enregistrée » + « Ajouter une attestation ».
+
+**Cinq types officiels**
+
+| Code | Libellé | Organisme délivreur |
+|------|---------|---------------------|
+| `REVENU_QUEBEC` | Attestation de Revenu Québec | Revenu Québec |
+| `ARC` | Attestation de l'Agence du revenu du Canada | Agence du revenu du Canada |
+| `CNESST` | Attestation de conformité CNESST | CNESST |
+| `CCQ` | Attestation CCQ - État de situation | Commission de la construction du Québec |
+| `RBQ` | Attestation de solvabilité RBQ | Régie du bâtiment du Québec |
+
+**Modale « Nouvelle attestation » / « Modifier l'attestation »** — champs : **Type** (obligatoire, menu déroulant des 5 types) · **Numéro d'attestation** (obligatoire, 100 caractères maximum) · **Date d'émission** / **Date d'expiration** · **Statut** (menu déroulant) · **Notes**. Le couple (type, numéro) est **unique** : un doublon est refusé (erreur 409).
+
+**Modale « Téléverser un document »**
+
+- Note affichée : « **Types acceptés: PDF, JPG, PNG, WebP. Taille maximum: 10 Mo.** »
+- Un seul fichier accepté. Le bouton « Téléverser » reste désactivé tant qu'aucun fichier n'est choisi.
+- Le fichier est validé côté serveur : type MIME dans la liste autorisée (sinon erreur 415), taille au plus 10 Mo (sinon erreur 413), fichier non vide, et **vérification des octets d'en-tête** (le vrai format doit correspondre à l'extension). Le nom du fichier est assaini.
+- Après le téléversement, la ligne affiche désormais le bouton **Télécharger** (avec la taille).
+
+### 2.5 Onglet « Audits et inspections » (vérification IA d'un projet)
+
+> Rappel : cet onglet n'enregistre aucun audit. C'est un **outil IA** qui, à partir des paramètres d'un projet, énumère les exigences réglementaires probables. Le résultat est **éphémère** (il n'est pas sauvegardé).
+
+**Formulaire « Vérification d'exigences réglementaires (IA) »**
+
+- **Type de projet** (menu déroulant, 7 valeurs : Résidentiel unifamilial, Résidentiel multifamilial, Commercial, Industriel, Institutionnel, Rénovation majeure, Agrandissement)
+- **Valeur estimée ($)** (nombre, pas de 10 000, défaut 100 000)
+- **Région** (menu déroulant, 18 valeurs : 17 régions administratives + « Autre région »)
+- **Types de travaux** (« {n} », obligatoire) : cases à cocher parmi 12 options (Fondation, Charpente, Électricité, Plomberie, Chauffage/Ventilation, Toiture, Revêtement extérieur, Finition intérieure, Maçonnerie, Structure métallique, Excavation, Piscine)
+
+Bouton **« Vérifier les exigences »** (désactivé si aucun type de travaux n'est coché ; un indicateur d'activité tourne pendant l'appel).
+
+**Panneau de résultat** — l'IA renvoie :
+
+- **Licences RBQ requises** (badges « Obligatoire » / « Recommandée »)
+- **Métiers CCQ requis** (nombre estimé + qualification)
+- **Permis requis**
+- **Attestations requises**
 - **Cautionnement minimum** ($)
-- **Assurance responsabilite minimum** ($)
-- **Ratio compagnon/apprenti** (ex. `1:1`, `2:1`)
-- **Estimation delai conformite** (texte libre ex. « 4 semaines »)
-- **Alertes** : non-conformites potentielles a surveiller
+- **Assurance responsabilité minimum** ($)
+- **Ratio compagnon/apprenti**
+- **Délai estimé** de mise en conformité
+- **Alertes** (non-conformités potentielles à surveiller)
 
-> **Important** : ce diagnostic IA est **indicatif**. Il s appuie sur le prompt systeme `AI_SYSTEM_PROMPT` (qui specifie de ne jamais inventer de numeros de loi). Toujours valider avec la RBQ ou un avocat specialise pour des cas complexes ou hors normes.
+> Ce diagnostic est **indicatif**. Le prompt système interdit à l'IA d'inventer des numéros de loi (« Préfère indiquer "à vérifier" plutôt que fabriquer une référence »). Validez toujours les cas complexes auprès de la RBQ, de la CCQ ou d'un conseiller spécialisé.
 
-### 2.5 Onglet « Tableau de bord »
+### 2.6 Onglet « Assistant IA »
 
-Source : `ConformitePage.tsx:1708-1897` (composant `DashboardTab`).
+Sous-navigation en pilules ; chaque outil rappelle : « **Cette action consomme des crédits IA.** » Un verrou interne empêche de lancer deux appels IA en même temps.
 
-**Section KPIs** (4 cartes pastels) :
-- Licences RBQ actives (avec sous-trend `N total`)
-- Cartes CCQ actives (avec sous-trend `N total`)
-- Attestations valides (avec sous-trend `N total`)
-- **Score conformite** (couleur : vert >= 80, jaune >= 50, rouge < 50)
+Six sous-outils :
 
-**Section alertes** (3 cartes) :
-- A renouveler dans 60 jours (somme licences + cartes + attestations)
-- Expires (somme)
-- Cautionnement total ($)
+1. **« Analyser ma conformité »** — bouton « Analyser » → score, niveau de risque, résumé, points conformes, non-conformités (avec badge de gravité), risques, renouvellements urgents, recommandations et estimation des coûts de mise en conformité. Point d'accès `POST /conformite/ai/analyze`.
+2. **« Chat réglementaire »** — fil de conversation, zone de saisie (Entrée pour envoyer, Maj+Entrée pour un saut de ligne, 5000 caractères maximum), case **« Inclure le contexte de mon dossier »**, boutons « Envoyer » et « Effacer ». Point d'accès `POST /conformite/ai/chat`.
+3. **« Rechercher une réglementation »** — champ de recherche (500 caractères maximum) → interprétation, réponse directe, résultats (titre, source, référence, résumé, lien officiel), points importants, mises en garde et ressources. Point d'accès `POST /conformite/ai/search-regulations`. Les liens renvoyés sont assainis côté serveur (seuls `http://` et `https://` sont conservés).
+4. **« Prédire mes renouvellements »** — bouton → coût annuel estimé, budget mensuel, renouvellements urgents, calendrier sur 12 mois (coût, éléments, actions), risques d'expiration et recommandations. Point d'accès `POST /conformite/ai/predict-renewals`.
+5. **« Générer un rapport »** — bouton → rapport professionnel (titre, dates, score global, évaluation, résumé exécutif, blocs Conformité RBQ et CCQ, attestations, risques, plan d'action, conclusion, prochaine révision). Point d'accès `POST /conformite/ai/generate-rapport`. **Le rapport est affiché à l'écran seulement : aucun export ni téléchargement.**
+6. **« Recommander des formations »** — saisie facultative de « Projets prévus » sous forme de puces ajoutables → analyse des compétences (forces, lacunes, occasions), formations recommandées (organisme, durée, coût, public, priorité, bénéfices), certifications suggérées, plan de développement, budget annuel et rendement estimé. Point d'accès `POST /conformite/ai/recommend-formations`.
 
-**Score conformite — Calcul** (cf. `_calculate_score_conformite`) :
-- Demarre a 100.
-- `-10` par licence expiree.
-- `-5` par carte CCQ expiree.
-- `-8` par attestation expiree.
-- Floor a 0, ceil a 100.
-- Si aucune donnee enregistree : score = 0.
-
-**Section liste d alertes** (max 30) generee par `GET /conformite/alertes` :
-- LICENCE_EXPIREE (HAUTE)
-- LICENCE_EXPIRE_BIENTOT (MOYENNE) — fenetre 60 jours
-- CARTE_EXPIREE (HAUTE)
-- CARTE_EXPIRE_BIENTOT (MOYENNE) — fenetre 60 jours
-- ATTESTATION_EXPIREE (HAUTE)
-- ATTESTATION_EXPIRE_BIENTOT (MOYENNE) — fenetre 30 jours
-
-Chaque alerte a un message formate (ex. « Licence RBQ 5734-1234-01 (XYZ Construction) expire le 2026-08-15 »).
-
-**Section repartitions** (3 cartes Top 10) :
-- Repartition des licences RBQ par categorie (unnest JSONB du tableau `categories`)
-- Repartition des cartes CCQ par metier principal
-- Repartition des attestations par type
-
-**Section ressources** :
-- **Organismes de reference** (Top 6 sur 8) : nom, role, contact telephonique, lien.
-- **Conseils pratiques** (6 sections) : titres + 3 premiers items chacun.
+> Le septième outil IA du module, la **vérification de projet** (`POST /conformite/ai/verify-project`), n'est pas dans cet onglet : il est utilisé par l'onglet « Audits et inspections » (section 2.5).
 
 ---
 
-## 3. Workflows pas-a-pas
+## 3. Workflows pas à pas
 
 ### 3.1 Enregistrer une licence RBQ existante
 
-1. Onglet **Licences RBQ** -> bouton **Nouvelle licence**.
-2. Saisir le numero de licence officiel (format type RBQ : `XXXX-XXXX-XX`).
-3. Saisir le nom de l entreprise titulaire (peut differer du nom commercial du tenant si filiale).
-4. Cocher toutes les **sous-categories** couvertes par la licence (ex. `1.1` + `15.5` + `15.6` pour residentiel + ventilation + climatisation).
-5. Renseigner :
-   - Date d emission (date originale d obtention).
-   - Date d expiration (date a partir de laquelle elle deviendra invalide si non renouvelee — typiquement annuelle).
-   - Statut `ACTIVE`.
-   - Cautionnement : montant en $ (la RBQ exige un cautionnement variable selon la categorie ; voir verifications/IA si inconnu).
-   - Assurance responsabilite : montant ($).
-6. **Enregistrer**.
+1. Onglet **Licences RBQ** → bouton **« Nouvelle licence »**.
+2. Saisir le **numéro de licence** officiel (format RBQ, par exemple « 5734-1234-01 »).
+3. Saisir le **nom de l'entreprise** titulaire (il peut différer du nom commercial du tenant s'il s'agit d'une filiale).
+4. Cocher toutes les **sous-catégories** couvertes par la licence (par exemple 1.1 + 15.5 + 15.6 pour résidentiel + ventilation + climatisation).
+5. Renseigner la **date d'émission**, la **date d'expiration**, le **statut** (ACTIVE), le **cautionnement** et l'**assurance responsabilité**.
+6. Cliquer **« Créer »**. Un message de succès confirme, et la liste comme les statistiques se rafraîchissent.
 
-### 3.2 Renouveler une licence avant expiration
+*Rappel de permission : réservé à l'administrateur du tenant.*
 
-1. Tableau de bord -> verifier les **alertes LICENCE_EXPIRE_BIENTOT** (fenetre 60 jours).
-2. Apres reception du certificat de renouvellement RBQ : ouvrir la licence concernee.
-3. Mettre a jour `date_expiration` (nouvelle date) et `statut = ACTIVE` si l ancien statut etait `EN_RENOUVELLEMENT` ou `EXPIREE`.
-4. Mettre a jour `cautionnement` si la RBQ a augmente le seuil exige.
-5. Enregistrer.
-6. Le score conformite remonte automatiquement (pas besoin d action).
+### 3.2 Renouveler une licence avant l'expiration
 
-### 3.3 Suspendre / revoquer une licence
+1. Dans le **Tableau de bord**, repérer les alertes « expire bientôt » (fenêtre de 60 jours).
+2. À la réception du certificat de renouvellement, ouvrir la licence concernée (icône Modifier).
+3. Mettre à jour la **date d'expiration** et remettre le **statut** à ACTIVE si l'ancien était EN_RENOUVELLEMENT ou EXPIREE.
+4. Ajuster le **cautionnement** si la RBQ a modifié le seuil exigé.
+5. **Enregistrer**. Le score de conformité remonte automatiquement.
 
-1. En cas de notification RBQ (ex. suite a une infraction grave) : ouvrir la licence.
-2. Changer `statut` :
-   - `SUSPENDUE` : suspension temporaire (ex. retard de cotisation) -> badge jaune.
-   - `REVOQUEE` : revocation definitive -> badge gris fonce.
-3. Renseigner les details dans `notes` (numero de dossier RBQ, motif).
-4. Enregistrer.
+### 3.3 Suspendre ou révoquer une licence
 
-### 3.4 Creer une carte CCQ pour un nouvel employe
+1. Ouvrir la licence concernée.
+2. Changer le **statut** : SUSPENDUE (temporaire, badge jaune) ou REVOQUEE (définitif, badge rouge foncé).
+3. Documenter le motif et le numéro de dossier RBQ dans les **Notes**.
+4. **Enregistrer**. Attention : une suspension retire 6 points de score, une révocation en retire 15 (voir 4.8).
 
-1. Au prealable : creer la fiche employe dans **Module 9 Employes** (la table `employees` doit exister et l ID est obligatoire).
-2. Onglet **Cartes CCQ** -> bouton **Nouvelle carte**.
-3. Saisir l **ID Employe** (verifie en base si la table `employees` existe — sinon HTTP 404).
-4. Saisir le **numero de carte** officiel CCQ.
-5. Selectionner le **metier principal** (28 metiers) — la liste de qualifications se met a jour dynamiquement.
-6. Selectionner la **qualification** (Compagnon par defaut, ou Classe N, ou Apprenti X periode).
-7. Cocher des **metiers additionnels** si l employe est qualifie sur plusieurs metiers (exclusion automatique du metier principal).
-8. Renseigner les heures totales (cumul depuis le debut de carriere CCQ).
-9. Saisir date d emission + date de renouvellement.
-10. Cocher **ASP Construction valide** si la formation sante-securite est a jour.
-11. **Enregistrer**.
+### 3.4 Créer la carte CCQ d'un nouvel employé
 
-> **Note** : l ID Employe est **non modifiable** apres creation (`disabled={isEdit}`). Pour reattribuer une carte a un autre employe : supprimer + recreer.
+1. Au préalable, créer la fiche de l'employé dans le **Module 11 (Employés)** : la carte se rattache à un employé existant.
+2. Onglet **Cartes CCQ** → bouton **« Nouvelle carte »**.
+3. Choisir l'**employé** dans le menu déroulant (employés actifs). Si la liste est vide, saisir l'identifiant manuellement.
+4. Saisir le **numéro de carte** officiel.
+5. Choisir le **métier principal** : la liste de compétences se met à jour automatiquement.
+6. Choisir la **compétence** (Compagnon par défaut, sinon une Classe ou une période d'apprenti).
+7. Cocher au besoin des **métiers additionnels** (le métier principal est déjà exclu).
+8. Renseigner les **heures accumulées**, la **date d'émission**, la **date d'expiration** et cocher **ASP Construction** si la formation est valide.
+9. Cliquer **« Créer »**.
 
-### 3.5 Mettre a jour les heures CCQ d un travailleur
+> **Rappel** : l'employé n'est **pas modifiable** après la création de la carte. Pour réaffecter une carte, il faut la supprimer et en créer une nouvelle.
 
-Apres chaque trimestre (ou frequence interne RH) :
+### 3.5 Mettre à jour les heures CCQ d'un travailleur
 
-1. Recuperer le total cumule des heures CCQ du travailleur depuis le portail employeur CCQ ou la paie (Module 9).
-2. Onglet **Cartes CCQ** -> ouvrir la carte du travailleur.
-3. Mettre a jour `heures_totales`.
-4. Si le seuil de passage d apprenti a compagnon est atteint : changer `qualification` (ex. `4e periode` -> `Compagnon`).
-5. Enregistrer.
+1. Récupérer le cumul d'heures depuis le portail employeur de la CCQ ou depuis la paie.
+2. Onglet **Cartes CCQ** → ouvrir la carte (icône Modifier).
+3. Mettre à jour les **heures accumulées**.
+4. Si le seuil de passage est atteint, changer la **compétence** (par exemple « 4e période » → « Compagnon » en changeant le métier de « Apprenti » au métier réel).
+5. **Enregistrer**.
 
 ### 3.6 Renouveler une carte CCQ
 
-1. Avant expiration : verifier le tableau de bord (alertes CARTE_EXPIRE_BIENTOT).
-2. Ouvrir la carte concernee.
-3. Mettre a jour `date_renouvellement` (apres reception de la nouvelle carte CCQ).
-4. Statut `ACTIVE` si necessaire.
-5. Enregistrer.
+1. Repérer l'alerte « à renouveler » dans le tableau de bord.
+2. Ouvrir la carte concernée.
+3. Mettre à jour la **date d'expiration (renouvellement)** et remettre le **statut** à ACTIVE au besoin.
+4. **Enregistrer**.
 
-### 3.7 Creer une nouvelle attestation (sans televersement immediat)
+### 3.7 Créer une attestation (sans pièce jointe immédiate)
 
-1. Onglet **Attestations** -> bouton **Nouvelle attestation**.
-2. Selectionner le **type** (Revenu Quebec, ARC, CNESST, CCQ, RBQ).
-3. Saisir le **numero** d attestation (format propre a chaque organisme).
-4. Renseigner la date d emission + date d expiration (typiquement 6 mois pour RQ/ARC, 90 jours pour CCQ etat de situation, etc.).
-5. Statut `VALIDE` par defaut.
-6. **Enregistrer**.
+1. Onglet **Documents légaux** → bouton **« Nouvelle attestation »**.
+2. Choisir le **type** (Revenu Québec, ARC, CNESST, CCQ ou RBQ).
+3. Saisir le **numéro** d'attestation.
+4. Renseigner la **date d'émission** et la **date d'expiration**.
+5. Laisser le statut à VALIDE.
+6. Cliquer **« Créer »**.
 
-### 3.8 Televerser le PDF d une attestation
+*Rappel de permission : réservé à l'administrateur ou au rôle « comptable ».*
 
-1. Onglet **Attestations** -> sur la ligne sans fichier : bouton **Televerser** (ou bouton avec icone Upload).
-2. Selectionner un fichier **PDF / JPG / PNG / WebP** (max 10 Mo).
-3. **Televerser** -> backend valide MIME + taille puis stocke en BYTEA.
-4. La ligne affiche desormais **Telecharger** + taille (Ko).
+### 3.8 Téléverser le fichier d'une attestation
 
-> **Bonne pratique** : televerser le PDF original recu par courriel (et non une photo) — le PDF inclut la signature numerique et est requis pour les soumissions d appels d offres publics.
+1. Onglet **Documents légaux** → sur la ligne sans fichier, cliquer **« Téléverser »**.
+2. Choisir un fichier **PDF, JPG, PNG ou WebP** de 10 Mo au maximum.
+3. Cliquer **« Téléverser »**. Le serveur valide le type, la taille et le format réel, puis stocke le fichier.
+4. La ligne affiche désormais **« Télécharger »** avec la taille.
 
-### 3.9 Telecharger une attestation deja televersee
+> **Bonne pratique** : téléverser le PDF original reçu par courriel (et non une photo) — il contient la signature numérique exigée pour les appels d'offres publics.
 
-1. Onglet **Attestations** -> bouton **Telecharger** (icone Download).
-2. Le fichier est servi avec `Content-Disposition: attachment` (telechargement force) + nom sanitise (RFC 5987 + fallback ASCII).
+### 3.9 Télécharger une pièce jointe
 
-### 3.10 Verifier les exigences reglementaires d un projet (IA)
+1. Onglet **Documents légaux** → bouton **« Télécharger »** (icône de téléchargement).
+2. Le fichier est servi en téléchargement forcé, avec un nom assaini et un type MIME revalidé (servi en flux binaire générique si le type sort de la liste autorisée).
 
-1. Onglet **Verifications**.
-2. Selectionner : type de projet, valeur, region, types de travaux (au moins 1, max 30).
-3. Bouton **Verifier les exigences** -> appel IA Claude Opus 4.7.
-4. Resultat `AiVerifyProjectResult` : licences RBQ requises (par categorie + obligatoire/recommandee), metiers CCQ requis (nombre estime + qualification), permis requis, attestations requises, cautionnement minimum, assurance responsabilite minimum, ratio compagnon/apprenti, inspections prevues, estimation delai, alertes.
-5. Comparer avec les licences/cartes existantes pour identifier les **gaps conformite** avant de soumissionner.
+### 3.10 Vérifier les exigences réglementaires d'un projet (IA)
 
-### 3.11 Autres operations IA (endpoints exposes par le store)
+1. Onglet **Audits et inspections**.
+2. Renseigner le **type de projet**, la **valeur estimée**, la **région** et cocher au moins un **type de travaux**.
+3. Cliquer **« Vérifier les exigences »** (l'appel consomme des crédits IA).
+4. Lire le panneau de résultat : licences requises (obligatoires ou recommandées), métiers CCQ, permis, attestations, cautionnement et assurance minimums, ratio compagnon/apprenti, délai et alertes.
+5. Comparer avec vos licences et cartes existantes pour repérer les écarts **avant** de soumissionner.
 
-| Endpoint                                | Action                                                                                | Reponse                                                                              |
-|-----------------------------------------|---------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-| `POST /ai/analyze`                      | Analyse globale conformite + score + risques + recommandations                       | Score 0-100, niveau risque, points conformes, non-conformites, recommandations       |
-| `POST /ai/chat`                         | Chat conversationnel expert (avec contexte tenant optionnel)                         | Texte libre francais quebecois                                                       |
-| `POST /ai/search-regulations`           | Recherche reglementation Quebec (query libre)                                        | Interpretation, resultats (titre + source + reference + resume + lien officiel)      |
-| `POST /ai/predict-renewals`             | Calendrier de renouvellements 12 mois                                                | Calendrier mois par mois, urgences, cout annuel, budget mensuel, risques             |
-| `POST /ai/generate-rapport`             | Rapport conformite professionnel structure                                           | Titre, resume executif, conformite RBQ + CCQ, plan d action, conclusion              |
-| `POST /ai/recommend-formations`         | Recommandations de formations equipe (avec projetsPrevus optionnels)                | Analyse competences, formations, certifications, plan trimestriel, budget, ROI       |
+> Le résultat n'est pas sauvegardé : copiez les éléments importants ailleurs si vous devez les conserver.
 
-> **Securite IA** : input utilisateur encadre en balises XML (`<user_question>`, `<project_details>`, `<search_query>`) — defense contre injection prompt. URLs sanitisees serveur — seuls schemas `http://` / `https://` conserves.
+### 3.11 Diagnostiquer sa conformité avec l'assistant IA
 
----
+1. Onglet **Assistant IA** → choisir un des six outils.
+2. Pour **« Analyser ma conformité »** : cliquer « Analyser » → l'IA lit vos données et renvoie un score, des non-conformités et des recommandations.
+3. Pour **« Chat réglementaire »** : poser une question ; cocher « Inclure le contexte de mon dossier » pour une réponse adaptée à vos enregistrements.
+4. Pour **« Prédire mes renouvellements »** : obtenir un calendrier de 12 mois avec le budget estimé.
+5. Pour **« Générer un rapport »** : produire un rapport structuré à l'écran (à recopier ailleurs si besoin, aucun export n'existe).
+6. Pour **« Recommander des formations »** : ajouter au besoin des projets prévus, puis lancer l'analyse des compétences de l'équipe.
 
-## 4. Reference
+Chaque appel consomme des crédits ; un solde épuisé renvoie une erreur 402 dans la bannière rouge.
 
-### 4.1 Statuts par entite (verbatim STATUTS_*)
+### 3.12 Lire le tableau de bord et prioriser
 
-| Entite                 | Codes (verbatim)                                              | Couleurs hex                            |
-|------------------------|---------------------------------------------------------------|-----------------------------------------|
-| Licence RBQ            | `ACTIVE`, `SUSPENDUE`, `EXPIREE`, `REVOQUEE`                  | Vert / Jaune / Rouge / Gris fonce       |
-| Carte CCQ              | `ACTIVE`, `SUSPENDUE`, `EXPIREE`                              | Vert / Jaune / Rouge                    |
-| Attestation            | `VALIDE`, `EN_RENOUVELLEMENT`, `EXPIREE`                      | Vert / Jaune / Rouge                    |
-| Niveau de risque (IA)  | `FAIBLE`, `MOYEN`, `ELEVE`, `CRITIQUE`                        | Vert / Jaune / Orange / Rouge           |
-| Priorite (alerte/recommandation) | `HAUTE`, `MOYENNE`, `BASSE`                          | Rouge / Jaune / Vert                    |
-| Gravite non-conformite | `MINEURE`, `MAJEURE`, `CRITIQUE`                              | Jaune / Orange / Rouge                  |
-
-### 4.2 Categories RBQ (26 sous-categories officielles)
-
-Source : `CATEGORIES_RBQ` dans `conformite_data.py`. Liste regroupee par groupe :
-
-- **Generale** : `1.1` Batiments residentiels neufs classe I, `1.2` Batiments residentiels neufs classe II, `1.3` Petits batiments, `16` Entrepreneur general.
-- **Mecanique** : `2` Chauffage a air chaud, `3` Plomberie, `15.1` Chauffage a eau chaude, `15.2` Chauffage a vapeur, `15.3` Bruleurs au mazout, `15.4` Bruleurs au gaz, `15.5` Ventilation, `15.6` Climatisation, `15.7` Refrigeration, `15.8` Protection-incendie.
-- **Electricite** : `4` Electricite.
-- **Genie civil** : `5.1` Excavation et terrassement, `5.2` Fondations profondes.
-- **Structure** : `6` Charpente et menuiserie, `11.1` Structures de beton, `11.2` Beton prefabrique, `12` Armature et ferraillage, `13` Structures metalliques et elements prefabriques, `14` Maconnerie.
-- **Enveloppe** : `7` Revetements exterieurs, `9` Toitures, `10` Isolation, etancheite, couvertures et revetements metalliques.
-- **Finition** : `8` Systemes interieurs.
-
-### 4.3 Metiers CCQ (28 metiers avec qualifications)
-
-Source : `METIERS_CCQ` dans `conformite_data.py`.
-
-**Metiers a qualification unique** `Compagnon` : Briqueteur-macon, Calorifugeur, Carreleur, Charpentier-menuisier, Chaudronnier, Cimentier-applicateur, Couvreur, Electricien, Ferblantier, Ferrailleur, Frigoriste, Mecanicien d ascenseur, Mecanicien de chantier, Mecanicien en protection-incendie, Monteur-assembleur, Monteur-mecanicien (vitrier), Operateur de pelles mecaniques, Peintre, Platrier, Plombier, Poseur de revetements souples, Poseur de systemes interieurs, Tuyauteur (23 metiers).
-
-**Metiers a qualifications multiples** :
-
-| Metier                          | Qualifications disponibles                                |
-|---------------------------------|-----------------------------------------------------------|
-| Apprenti                        | 1re periode, 2e periode, 3e periode, 4e periode           |
-| Grutier                         | Classe 1, Classe 2, Classe 3, Classe 4                    |
-| Operateur d equipement lourd    | Classe 1, Classe 2, Classe 3, Classe 4                    |
-| Soudeur                         | Classe A, Classe B, Classe C                              |
-| Soudeur en tuyauterie           | Classe A, Classe B                                        |
-
-### 4.4 Types d attestations (5)
-
-| Code            | Label                                                  | Organisme delivreur                    |
-|-----------------|--------------------------------------------------------|----------------------------------------|
-| `REVENU_QUEBEC` | Attestation de Revenu Quebec                          | Revenu Quebec                          |
-| `ARC`           | Attestation de l ARC                                   | Agence du revenu du Canada             |
-| `CNESST`        | Attestation de conformite CNESST                       | CNESST                                 |
-| `CCQ`           | Attestation CCQ — Etat de situation                    | CCQ                                    |
-| `RBQ`           | Attestation de solvabilite RBQ                         | RBQ                                    |
-
-### 4.5 Types de projet (verifications IA)
-
-`Residentiel unifamilial`, `Residentiel multifamilial`, `Commercial`, `Industriel`, `Institutionnel`, `Renovation majeure`, `Agrandissement`.
-
-### 4.6 Regions du Quebec (verifications IA)
-
-17 regions administratives + `Autre region` :
-Bas-Saint-Laurent, Saguenay-Lac-Saint-Jean, Capitale-Nationale, Mauricie, Estrie, Montreal, Outaouais, Abitibi-Temiscamingue, Cote-Nord, Nord-du-Quebec, Gaspesie-Iles-de-la-Madeleine, Chaudiere-Appalaches, Laval, Lanaudiere, Laurentides, Monteregie, Centre-du-Quebec, Autre region.
-
-### 4.7 Types de travaux (verifications IA, 12)
-
-`Fondation`, `Charpente`, `Electricite`, `Plomberie`, `Chauffage/Ventilation`, `Toiture`, `Revetement exterieur`, `Finition interieure`, `Maconnerie`, `Structure metallique`, `Excavation`, `Piscine`.
-
-### 4.8 Types de projet pour recommandations de formations (5)
-
-`Residentiel`, `Commercial`, `Industriel`, `Institutionnel`, `Infrastructure`.
-
-### 4.9 Endpoints API (REST, prefixe `/conformite`)
-
-**Metadata** :
-- `GET /conformite/constants` — Constantes (statuts, categories, metiers, types).
-- `GET /conformite/resources` — Organismes + conseils pratiques.
-
-**Licences RBQ** :
-- `GET /conformite/licences` — Liste filtrable (statut, categorie, search).
-- `GET /conformite/licences/expiring?days=60` — Licences expirant dans N jours.
-- `GET /conformite/licences/{id}` — Detail.
-- `POST /conformite/licences` — Creation.
-- `PUT /conformite/licences/{id}` — Mise a jour.
-- `DELETE /conformite/licences/{id}` — Suppression.
-
-**Cartes CCQ** :
-- `GET /conformite/cartes` — Liste filtrable (statut, metier, search) + jointure employes.
-- `GET /conformite/cartes/expiring?days=60` — Cartes expirant dans N jours.
-- `GET /conformite/cartes/{id}` — Detail.
-- `POST /conformite/cartes` — Creation (FK `employee_id` validee).
-- `PUT /conformite/cartes/{id}` — Mise a jour.
-- `DELETE /conformite/cartes/{id}` — Suppression.
-
-**Attestations** :
-- `GET /conformite/attestations` — Liste filtrable (statut, type).
-- `GET /conformite/attestations/expiring?days=30` — Attestations expirant dans N jours.
-- `GET /conformite/attestations/{id}` — Detail.
-- `POST /conformite/attestations` — Creation.
-- `PUT /conformite/attestations/{id}` — Mise a jour.
-- `DELETE /conformite/attestations/{id}` — Suppression.
-- `POST /conformite/attestations/{id}/upload` — Televersement PDF/image (max 10 Mo).
-- `GET /conformite/attestations/{id}/download` — Telechargement piece jointe.
-
-**Statistics & Alertes** :
-- `GET /conformite/statistics` — KPIs + score + repartitions.
-- `GET /conformite/alertes` — Liste consolidee des alertes (expirees + a renouveler).
-
-**IA (7 endpoints, Claude Opus 4.7)** :
-- `POST /conformite/ai/analyze` — Analyse globale conformite + score + recommandations.
-- `POST /conformite/ai/chat` — Chat conversationnel expert.
-- `POST /conformite/ai/verify-project` — Exigences reglementaires d un projet.
-- `POST /conformite/ai/search-regulations` — Recherche reglementation Quebec.
-- `POST /conformite/ai/predict-renewals` — Calendrier de renouvellements 12 mois.
-- `POST /conformite/ai/generate-rapport` — Rapport professionnel JSON structure.
-- `POST /conformite/ai/recommend-formations` — Recommandations formations equipe.
-
-### 4.10 Tables PostgreSQL (schema tenant)
-
-| Table                       | Role                                                                       |
-|-----------------------------|----------------------------------------------------------------------------|
-| `conformite_licences_rbq`   | Licences RBQ. `numero_licence` UNIQUE, `categories` JSONB.                 |
-| `conformite_cartes_ccq`     | Cartes CCQ. `numero_carte` UNIQUE, `metiers_additionnels` JSONB, FK `employee_id`. |
-| `conformite_attestations`   | Attestations. UNIQUE sur `(type, numero)`. `fichier_data` BYTEA pour PDF/images. |
-
-**Index** (auto-crees) :
-- `idx_conf_licences_expiration` sur `date_expiration`.
-- `idx_conf_licences_statut` sur `statut`.
-- `idx_conf_cartes_renouvellement` sur `date_renouvellement`.
-- `idx_conf_cartes_employee` sur `employee_id`.
-- `idx_conf_attestations_expiration` sur `date_expiration`.
-- `idx_conf_attestations_type` sur `type`.
-
-### 4.11 Validations & limites
-
-| Regle / Limite                                        | Effet HTTP                                |
-|-------------------------------------------------------|-------------------------------------------|
-| `numero_licence` deja utilise                         | 409 Conflict                              |
-| `numero_carte` deja utilise                           | 409 Conflict                              |
-| `(type, numero)` attestation deja utilise             | 409 Conflict                              |
-| `date_emission > date_expiration`                     | 422 Unprocessable Entity                  |
-| `cautionnement` ou `assurance` < 0 ou > 1 000 000 000 | 422                                       |
-| `heures_totales` < 0 ou > 1 000 000                   | 422                                       |
-| Statut hors enum                                      | 400 Bad Request                           |
-| Type d attestation hors enum                          | 400                                       |
-| Employe inexistant (carte CCQ)                        | 404 Not Found                             |
-| Fichier upload > 10 Mo                                | 413 Payload Too Large                     |
-| MIME hors PDF/JPG/PNG/WebP                            | 415 Unsupported Media Type                |
-| Notes > 5000 caracteres                               | 422                                       |
-| Item dans `categories` > 200 chars OU > 30 items      | 422                                       |
-| Search > 200 chars                                    | 422                                       |
-| IA sans credits prepayes                              | 402 Payment Required                      |
-| IA Claude surcharge / overload                        | 503 Service Unavailable                   |
-| IA reponse vide / JSON malforme                       | 502 Bad Gateway                           |
-
-### 4.12 Score conformite — Bareme
-
-| Etat                                          | Impact sur score |
-|-----------------------------------------------|------------------|
-| Aucune donnee                                 | 0                |
-| Etat de depart (avec donnees)                 | 100              |
-| Par licence RBQ expiree                       | -10              |
-| Par carte CCQ expiree                         | -5               |
-| Par attestation expiree                       | -8               |
-| Floor                                         | 0                |
-| Ceil                                          | 100              |
-
-Affichage couleur :
-- **Vert** : score >= 80%
-- **Jaune** : 50% <= score < 80%
-- **Rouge** : score < 50%
-
-### 4.13 Fenetres d alerte
-
-| Type alerte                           | Fenetre  | Priorite  |
-|---------------------------------------|----------|-----------|
-| LICENCE_EXPIREE                       | passe    | HAUTE     |
-| LICENCE_EXPIRE_BIENTOT                | 60 jours | MOYENNE   |
-| CARTE_EXPIREE                         | passe    | HAUTE     |
-| CARTE_EXPIRE_BIENTOT                  | 60 jours | MOYENNE   |
-| ATTESTATION_EXPIREE                   | passe    | HAUTE     |
-| ATTESTATION_EXPIRE_BIENTOT            | 30 jours | MOYENNE   |
-
-### 4.14 Couts IA (modele tarification)
-
-- Modele : `claude-opus-4-7` (var `CONF_AI_MODEL`).
-- `CONF_PRICING_INPUT` : 0.015 / 1000 tokens (input).
-- `CONF_PRICING_OUTPUT` : 0.075 / 1000 tokens (output).
-- `CONF_PRICING_MARKUP` : 1.30 (markup 30%).
-- `CONF_AI_MAX_TOKENS` : 30 000 par appel.
-- Cout debite via `_deduct_credits()` apres validation reussie de la reponse (les appels IA echouants ou JSON malformes **ne sont pas factures**).
+1. Onglet **Tableau de bord**.
+2. Vérifier le **score** (badge en tête de page) et les **indicateurs d'alerte** (« À renouveler », « Expirés »).
+3. Parcourir la **liste des alertes** : traiter d'abord les alertes de priorité HAUTE (déjà expirées), puis les MOYENNE (à renouveler).
+4. Consulter les **répartitions** pour voir la concentration par catégorie, métier ou type.
+5. Au besoin, se référer aux **organismes de référence** et aux **conseils pratiques** en bas de page.
 
 ---
 
-## 5. Integrations & FAQ
+## 4. Référence
 
-### 5.1 Integration Module 9 Employes
+### 4.1 Les six onglets
 
-- Table `employees` consultee pour valider l existence d un employe a la creation d une carte CCQ ; la jointure affiche le nom complet (`prenom + ' ' + nom`) dans le tableau.
-- Si la table n existe pas (tenant tres recent) : jointure omise, le tableau affiche `#employeeId`.
-- **Pas de synchronisation auto** : si un employe est supprime, sa carte CCQ reste avec `employee_nom = ''`. Bonne pratique : supprimer la carte en parallele.
+| Clé interne | Libellé affiché | Contenu réel |
+|-------------|-----------------|--------------|
+| `dashboard` | Tableau de bord | Synthèse (score, indicateurs, alertes, répartitions, ressources) |
+| `rbq` | Licences RBQ (N) | Registre des licences RBQ |
+| `ccq` | Cartes CCQ (N) | Registre des cartes CCQ |
+| `attestations` | Documents légaux (N) | Registre des attestations |
+| `verifications` | Audits et inspections | Vérification IA d'un projet |
+| `assistant` | Assistant IA | Six outils IA |
 
-### 5.2 Integration Module 1 Projets / Module 19 Immobilier
+### 4.2 Points d'accès de l'API (31 au total, préfixe `/api/erp/v1/conformite`)
 
-- **Aucune integration directe** : les licences RBQ ne sont pas verifiees automatiquement avant la creation d un projet.
-- L onglet **Verifications** est utilise **manuellement** avant de soumettre une offre.
-- Les conformites de phases construction (CNB / CCE / CSST / Municipal) du Module 19 sont des booleans separes — sans lien avec les licences RBQ stockees ici.
+**Métadonnées (2)** — lecture, tout utilisateur du tenant :
 
-### 5.3 Integration Comptabilite et Subventions
+| Méthode + chemin | Rôle |
+|------------------|------|
+| `GET /constants` | Renvoie les enumérations et listes de référence pour l'interface |
+| `GET /resources` | Renvoie les 8 organismes et les 6 sections de conseils |
 
-- **Pas d ecriture journal** automatique. Les cautionnements et assurances sont informatifs (pas des passifs/actifs comptables). Comptabilisation manuelle dans Module 7.
-- Les recommandations de formations IA peuvent suggerer des formations subventionnees (CCQ, ASP) sans lien automatique vers Module 18.
+**Licences RBQ (6)** :
 
-### 5.4 Integration IA / Credits
+| Méthode + chemin | Garde |
+|------------------|-------|
+| `GET /licences` (filtres statut, catégorie, recherche) | tout utilisateur |
+| `GET /licences/expiring?days=60` (bornes 1-365) | tout utilisateur |
+| `GET /licences/{id}` | tout utilisateur |
+| `POST /licences` | administrateur |
+| `PUT /licences/{id}` | administrateur |
+| `DELETE /licences/{id}` | administrateur |
 
-- 7 endpoints IA passent par `_check_credits()` (credits prepayes tenant, table `tenant_settings`).
-- Cout suivi dans la table `ai_usage` avec `feature` = `conformite_analyze`, `conformite_chat`, `conformite_verify_project`, `conformite_search_reg`, `conformite_predict_renewals`, `conformite_generate_rapport`, `conformite_recommend_formations`.
-- Securite : input encadre en balises XML, URLs sanitisees serveur (uniquement `http://` / `https://`).
+**Cartes CCQ (6)** :
 
-### 5.5 Calendrier et multi-tenant
+| Méthode + chemin | Garde |
+|------------------|-------|
+| `GET /cartes` (filtres statut, métier, recherche) | tout utilisateur |
+| `GET /cartes/expiring?days=60` (bornes 1-365) | tout utilisateur |
+| `GET /cartes/{id}` | tout utilisateur |
+| `POST /cartes` | administrateur |
+| `PUT /cartes/{id}` | administrateur |
+| `DELETE /cartes/{id}` | administrateur |
 
-- **Pas d export iCal / Google Calendar**. Recommandation : consulter le tableau de bord ou ajouter au Calendrier ERP (`/calendar`).
-- Toutes les tables sont dans le schema PostgreSQL du tenant (`SET search_path`). Pas de fuite cross-tenant.
-- Pas de sous-roles dedies (« responsable conformite ») : tous les utilisateurs authentifies ont les memes droits CRUD.
+**Attestations (8)** :
 
-### 5.8 FAQ
+| Méthode + chemin | Garde |
+|------------------|-------|
+| `GET /attestations` (filtres statut, type) | tout utilisateur |
+| `GET /attestations/expiring?days=30` (bornes 1-365) | tout utilisateur |
+| `GET /attestations/{id}` | tout utilisateur |
+| `POST /attestations` | administrateur ou comptable |
+| `PUT /attestations/{id}` | administrateur ou comptable |
+| `DELETE /attestations/{id}` | administrateur ou comptable |
+| `POST /attestations/{id}/upload` (PDF/JPG/PNG/WebP, 10 Mo) | administrateur ou comptable |
+| `GET /attestations/{id}/download` | tout utilisateur |
 
-**Q : Quelle est la difference entre la RBQ et la CCQ ?**
-R : La **RBQ** delivre les licences aux **entreprises** entrepreneures (numero par entite morale). La **CCQ** delivre les cartes de competence aux **travailleurs individuels** (regime R-20). Une entreprise a une licence RBQ ; chaque ouvrier a sa carte CCQ.
+**Tableau de bord et alertes (2)** :
 
-**Q : Que se passe-t-il si ma licence RBQ expire ?**
-R : Vous ne pouvez plus executer ni facturer de travaux dans la sous-categorie correspondante. Le score chute de 10 points. La RBQ peut imposer des amendes en cas de travaux executes sans licence active.
+| Méthode + chemin | Rôle |
+|------------------|------|
+| `GET /statistics` | Indicateurs, score et 3 répartitions |
+| `GET /alertes` | 6 familles d'alertes (20 lignes maximum chacune) |
 
-**Q : Comment savoir si mon entreprise doit detenir un cautionnement ?**
-R : La RBQ exige un cautionnement variable selon la sous-categorie (typiquement 5 000 $ a 40 000 $). Utiliser **Verifications IA** pour obtenir le `cautionnement_minimum` recommande, puis valider avec la RBQ.
+**Assistant IA (7)** — tout utilisateur du tenant, blocage réel par les crédits :
 
-**Q : Le module gere-t-il les declarations mensuelles d heures CCQ ?**
-R : **NON**. Le champ `heures_totales` est cumulatif et **manuel**, pas un journal mensuel. Pour les declarations, utiliser le portail employeur CCQ officiel ou un logiciel de paie integre.
+| Méthode + chemin | Rôle |
+|------------------|------|
+| `POST /ai/analyze` | Analyse complète (score, risques, non-conformités) |
+| `POST /ai/chat` | Chat réglementaire (question 1-2000 caractères, contexte optionnel) |
+| `POST /ai/verify-project` | Exigences réglementaires d'un projet |
+| `POST /ai/search-regulations` | Recherche de réglementation (requête 1-1000 caractères) |
+| `POST /ai/predict-renewals` | Calendrier de renouvellements sur 12 mois |
+| `POST /ai/generate-rapport` | Rapport de conformité structuré |
+| `POST /ai/recommend-formations` | Recommandations de formations (jusqu'à 20 projets prévus) |
 
-**Q : Comment renouveler les cartes CCQ par lot ?**
-R : Pas de renouvellement par lot dans l UI. Utiliser l API (`PUT /conformite/cartes/{id}`) via un script, ou filtrer par `cartes/expiring?days=60` et traiter une par une.
+> **Note d'architecture** : le module est **monté directement** (sans bloc défensif) dans `erp_api.py`. Les données de référence proviennent de `conformite_data.py`, qui est un simple **module de données** (aucun point d'accès n'y est défini). Aucun point d'accès de conformité ne se trouve dans `secondary.py`.
 
-**Q : Que se passe-t-il si je televerse un fichier de plus de 10 Mo ?**
-R : HTTP 413. Compresser le PDF ou photographier l attestation en JPG basse resolution. Pas de compression automatique.
+### 4.3 Statuts par entité
 
-**Q : Les attestations CCQ et RBQ sont-elles distinctes des licences ?**
-R : **OUI**. La **licence RBQ** (onglet 1) est l autorisation d exercer. L **attestation de solvabilite RBQ** (type `RBQ` onglet 3) est un document court (~90 jours) prouvant la solvabilite courante, exige pour soumissionner. De meme, la **carte CCQ** = competence du travailleur ; l **attestation CCQ Etat de situation** = etat des cotisations de l entreprise.
+| Entité | Statuts possibles | Couleurs |
+|--------|-------------------|----------|
+| Licence RBQ | ACTIVE · SUSPENDUE · EXPIREE · REVOQUEE | vert · jaune · rouge · gris foncé |
+| Carte CCQ | ACTIVE · SUSPENDUE · EXPIREE | vert · jaune · rouge |
+| Attestation | VALIDE · EN_RENOUVELLEMENT · EXPIREE | vert · jaune · rouge |
+| Niveau de risque (IA) | FAIBLE · MOYEN · ELEVE · CRITIQUE | vert · jaune · orange · rouge |
+| Priorité (alerte) | HAUTE · MOYENNE · BASSE | rouge · jaune · vert |
+| Gravité (non-conformité IA) | MINEURE · MAJEURE · CRITIQUE | jaune · orange · rouge |
 
-**Q : Le module valide-t-il mes numeros de licence aupres du registre RBQ public ?**
-R : **NON**. Aucun appel API au registre RBQ. Saisie entierement manuelle. Pour verifier officiellement, utiliser `rbq.gouv.qc.ca`.
+> Les statuts d'attestation ne sont que **trois** dans le moteur (VALIDE, EN_RENOUVELLEMENT, EXPIREE). Toute autre valeur qui apparaîtrait dans un menu (par exemple « échu » ou « suspendu ») serait un vestige de traduction sans effet réel.
 
-**Q : Y a-t-il un audit log des modifications ?**
-R : Le module conserve `created_at` et `updated_at` mais **pas d audit log detaille** (qui a modifie quoi). Utiliser le champ `notes` pour journaliser les changements importants.
+### 4.4 Les 27 catégories RBQ (par sous-groupe)
 
-**Q : Le score de conformite tient-il compte des suspensions ?**
-R : Le bareme penalise uniquement les **expirations** (-10/-5/-8). Les suspensions (`SUSPENDUE`) ne retirent pas explicitement de points mais sont comptees hors « actives » dans les KPIs.
+Source : `CATEGORIES_RBQ`, 27 entrées. (Plusieurs commentaires du code annoncent « 26 » ; la liste réelle en contient bien **27**.)
 
-**Q : Les credits IA sont-ils consommes si la reponse Claude est mauvaise ?**
-R : **NON**. La deduction `_deduct_credits` intervient apres validation reussie. Une reponse vide, malformee ou avec erreur **ne facture rien**.
+**Générale (4)**
+- `1.1` — Entrepreneur en bâtiments résidentiels neufs classe I
+- `1.2` — Entrepreneur en bâtiments résidentiels neufs classe II
+- `1.3` — Entrepreneur en petits bâtiments
+- `16` — Entrepreneur général
 
-**Q : Y a-t-il une fonction d export Excel ou CSV ?**
-R : **Pas dans cette implementation**. Utiliser l API (`GET /conformite/licences`, `/cartes`, `/attestations`) puis convertir cote client.
+**Mécanique (10)**
+- `2` — Entrepreneur en systèmes de chauffage à air chaud
+- `3` — Entrepreneur en plomberie
+- `15.1` — Systèmes de chauffage à eau chaude
+- `15.2` — Systèmes de chauffage à vapeur
+- `15.3` — Systèmes de brûleurs au mazout
+- `15.4` — Systèmes de brûleurs au gaz
+- `15.5` — Ventilation
+- `15.6` — Climatisation
+- `15.7` — Réfrigération
+- `15.8` — Protection-incendie
 
-**Q : Comment partager le rapport de conformite IA avec un auditeur ?**
-R : `/ai/generate-rapport` retourne du JSON. Cote client, formater en PDF (jsPDF) ou copier-coller dans Word/Google Docs.
+**Électricité (1)**
+- `4` — Entrepreneur en électricité
 
-**Q : Plusieurs licences RBQ pour une meme entreprise (corporative + filiales) ?**
-R : **OUI**. Pas de limite hard. Chaque ligne `conformite_licences_rbq` est independante.
+**Génie civil (2)**
+- `5.1` — Excavation et terrassement
+- `5.2` — Fondations profondes
 
-**Q : Le module IA garantit-il la conformite legale ?**
-R : **NON**. Le prompt systeme precise « N invente jamais de numeros de loi. Prefere 'a verifier' plutot que fabriquer une reference. » Pour des cas critiques, consulter un avocat specialise et la RBQ.
+**Structure (6)**
+- `6` — Charpente et menuiserie
+- `11.1` — Structures de béton
+- `11.2` — Béton préfabriqué
+- `12` — Armature et ferraillage
+- `13` — Structures métalliques et éléments préfabriqués
+- `14` — Maçonnerie
 
-**Q : Les pieces jointes sont-elles servies de maniere securisee ?**
-R : **OUI**. Download utilise RFC 5987 + fallback ASCII. Caracteres dangereux remplaces par `_`. MIME re-valide ; un MIME hors whitelist est servi en `application/octet-stream`.
+**Enveloppe (3)**
+- `7` — Revêtements extérieurs
+- `9` — Toitures
+- `10` — Isolation, étanchéité, couvertures et revêtements métalliques
 
-**Q : Peut-on associer une attestation a une licence ou un projet specifique ?**
-R : **NON dans cette implementation**. Les attestations sont globales au tenant. Utiliser `notes` ou Module 8 Dossiers pour indexation.
+**Finition (1)**
+- `8` — Systèmes intérieurs
 
-**Q : Que faire en cas d audit RBQ ou CNESST ?**
-R : 1) Telecharger toutes les attestations via l onglet. 2) Generer un rapport IA via `/ai/generate-rapport`. 3) Exporter les donnees via API. 4) Conserver au moins 6 ans (delai legal Quebec).
+### 4.5 Les 28 métiers CCQ
+
+Source : `METIERS_CCQ`, 28 métiers.
+
+**Métiers à progression multiple (5)** : Apprenti (4 périodes), Grutier (4 classes), Opérateur d'équipement lourd (4 classes), Soudeur (classes A/B/C), Soudeur en tuyauterie (classes A/B) — voir le tableau en 2.3.
+
+**Métiers à qualification « Compagnon » (23)** : Briqueteur-maçon, Calorifugeur, Carreleur, Charpentier-menuisier, Chaudronnier, Cimentier-applicateur, Couvreur, Électricien, Ferblantier, Ferrailleur, Frigoriste, Mécanicien d'ascenseur, Mécanicien de chantier, Mécanicien en protection-incendie, Monteur-assembleur, Monteur-mécanicien (vitrier), Opérateur de pelles mécaniques, Peintre, Plâtrier, Plombier, Poseur de revêtements souples, Poseur de systèmes intérieurs, Tuyauteur.
+
+### 4.6 Les 5 types d'attestation
+
+| Code | Libellé | Organisme | Objet |
+|------|---------|-----------|-------|
+| `REVENU_QUEBEC` | Attestation de Revenu Québec | Revenu Québec | Conformité fiscale provinciale |
+| `ARC` | Attestation de l'Agence du revenu du Canada | Agence du revenu du Canada | Conformité fiscale fédérale |
+| `CNESST` | Attestation de conformité CNESST | CNESST | Santé et sécurité au travail |
+| `CCQ` | Attestation CCQ - État de situation | Commission de la construction du Québec | État des cotisations |
+| `RBQ` | Attestation de solvabilité RBQ | Régie du bâtiment du Québec | Solvabilité et cautionnement |
+
+### 4.7 Paramètres de la vérification de projet (IA)
+
+- **Types de projet (7)** : Résidentiel unifamilial, Résidentiel multifamilial, Commercial, Industriel, Institutionnel, Rénovation majeure, Agrandissement.
+- **Régions (18)** : Bas-Saint-Laurent, Saguenay–Lac-Saint-Jean, Capitale-Nationale, Mauricie, Estrie, Montréal, Outaouais, Abitibi-Témiscamingue, Côte-Nord, Nord-du-Québec, Gaspésie–Îles-de-la-Madeleine, Chaudière-Appalaches, Laval, Lanaudière, Laurentides, Montérégie, Centre-du-Québec, Autre région.
+- **Types de travaux (12)** : Fondation, Charpente, Électricité, Plomberie, Chauffage/Ventilation, Toiture, Revêtement extérieur, Finition intérieure, Maçonnerie, Structure métallique, Excavation, Piscine.
+- **Types de projet pour la recommandation de formations (5)** : Résidentiel, Commercial, Industriel, Institutionnel, Infrastructure.
+
+### 4.8 Score de conformité (barème complet)
+
+Le score part de **100** puis retranche les pénalités suivantes :
+
+| Situation | Pénalité |
+|-----------|----------|
+| Licence RBQ **révoquée** | −15 |
+| Licence RBQ **expirée** | −10 |
+| Licence RBQ **suspendue** | −6 |
+| Attestation **expirée** | −8 |
+| Carte CCQ **expirée** | −5 |
+| Carte CCQ **suspendue** | −3 |
+
+- Le score est borné entre **0 et 100**.
+- **Aucune donnée enregistrée → score = 0** (les enregistrements suspendus, révoqués ou en renouvellement comptent tout de même comme « des données », pour éviter qu'un tenant qui n'a que ce type d'enregistrements soit affiché à tort à 0).
+- Affichage du badge : **vert ≥ 80 %**, **jaune de 50 à 79 %**, **rouge < 50 %**.
+
+> Correction par rapport aux versions antérieures de ce manuel : les **suspensions** et les **révocations** pénalisent bel et bien le score (elles n'étaient pas prises en compte dans l'ancien barème documenté).
+
+### 4.9 Fenêtres d'alerte
+
+**Liste « Alertes de conformité » du tableau de bord** (`GET /alertes`) — 6 familles, 20 lignes maximum chacune :
+
+| Type d'alerte | Condition | Priorité |
+|---------------|-----------|----------|
+| LICENCE_EXPIREE | date d'expiration passée | HAUTE |
+| LICENCE_EXPIRE_BIENTOT | expire dans les 60 jours | MOYENNE |
+| CARTE_EXPIREE | renouvellement passé | HAUTE |
+| CARTE_EXPIRE_BIENTOT | expire dans les 60 jours | MOYENNE |
+| ATTESTATION_EXPIREE | date d'expiration passée | HAUTE |
+| ATTESTATION_EXPIRE_BIENTOT | expire dans les 60 jours | MOYENNE |
+
+**Points d'accès « expiring » autonomes** (paramètre `?days=` borné à 1-365) :
+
+| Point d'accès | Défaut |
+|---------------|--------|
+| `GET /licences/expiring` | 60 jours |
+| `GET /cartes/expiring` | 60 jours |
+| `GET /attestations/expiring` | 30 jours |
+
+> Les dates limites sont calculées sur la **date locale du tenant** (fuseau horaire de l'entreprise), pas sur l'heure UTC du serveur — la bascule « expiré / valide » du soir correspond donc au calendrier local.
+
+### 4.10 Tables PostgreSQL (schéma du tenant)
+
+Les trois tables sont créées **à la demande** (à la première requête), pas au moment de la création du tenant.
+
+| Table | Contenu et contraintes |
+|-------|------------------------|
+| `conformite_licences_rbq` | `numero_licence` **UNIQUE**, `categories` en JSONB, cautionnement et assurance en numérique |
+| `conformite_cartes_ccq` | `numero_carte` **UNIQUE**, `employee_id` (lien logique vers `employees.id`, validé si la table existe), `metiers_additionnels` en JSONB, `asp_construction` booléen |
+| `conformite_attestations` | **UNIQUE (type, numero)**, pièce jointe en `fichier_data` BYTEA + `fichier_nom`, `mime_type`, `taille` |
+
+**Index créés automatiquement** : `idx_conf_licences_expiration`, `idx_conf_licences_statut`, `idx_conf_cartes_renouvellement`, `idx_conf_cartes_employee`, `idx_conf_attestations_expiration`, `idx_conf_attestations_type`.
+
+### 4.11 Validations et codes d'erreur
+
+| Règle ou limite | Réponse HTTP |
+|-----------------|--------------|
+| Numéro de licence déjà utilisé | 409 (conflit) |
+| Numéro de carte déjà utilisé | 409 |
+| Couple (type, numéro) d'attestation déjà utilisé | 409 |
+| Date d'émission postérieure à la date d'expiration | 422 |
+| Cautionnement ou assurance hors de 0 à 1 000 000 000 | 422 |
+| Heures accumulées hors de 0 à 1 000 000 | 422 |
+| Notes de plus de 5000 caractères | 422 |
+| Plus de 30 catégories, ou un code de plus de 200 caractères | 422 |
+| Statut hors de la liste autorisée | 400 |
+| Type d'attestation hors de la liste | 400 |
+| Catégorie RBQ ou métier CCQ hors de la liste officielle | 400 |
+| Employé inexistant (création de carte) | 404 |
+| Corps de mise à jour vide | 400 |
+| Fichier de plus de 10 Mo | 413 |
+| Type MIME hors PDF/JPG/PNG/WebP, ou octets d'en-tête non conformes | 415 |
+| Service IA indisponible | 503 |
+| Crédits IA épuisés | 402 |
+| IA surchargée (« overload ») | 503 |
+| Réponse IA vide ou mal formée | 502 |
+
+### 4.12 Coûts de l'IA
+
+- **Modèle** : `claude-opus-4-8`, 32 000 jetons maximum par appel.
+- **Tarifs de base** : 5 $ US par million de jetons en entrée, 25 $ par million en sortie, 6,25 $ par million pour l'écriture de cache, 0,50 $ par million pour la lecture de cache.
+- **Majoration** : × 1,30 (30 %).
+- **Le débit se fait APRÈS validation de la réponse** : un appel qui échoue, revient vide ou mal formé **n'est pas facturé**.
+- **Limite de débit dédiée** : 10 appels IA par minute et par adresse IP sur les chemins `/conformite/ai/` (c'est la classe d'endpoint la plus coûteuse de l'application).
+
+### 4.13 Raccourcis et comportements utiles
+
+- **Recherche** : délai de 400 ms avant l'envoi ; les caractères spéciaux (`\`, `%`, `_`) sont échappés côté serveur.
+- **Chat réglementaire** : Entrée pour envoyer, Maj+Entrée pour un saut de ligne.
+- **Badges de catégories** : 3 affichés au maximum sur ordinateur (puis « +N »), 4 sur mobile.
+- **Verrou IA** : un seul appel IA à la fois (les boutons se désactivent pendant le traitement).
 
 ---
 
-## 6. Recap one-pager
+## 5. Intégrations et FAQ
 
-- **Module focus** : conformite reglementaire Quebec construction (RBQ + CCQ + attestations fiscales/sectorielles).
-- **5 onglets** : Licences RBQ / Cartes CCQ / Attestations / Verifications IA / Tableau de bord.
-- **3 entites** : licences RBQ (26 sous-categories), cartes CCQ (28 metiers a qualifications dynamiques), attestations (5 types avec PDF/image jusqu a 10 Mo).
-- **Statuts** : licence (ACTIVE/SUSPENDUE/EXPIREE/REVOQUEE), carte CCQ (ACTIVE/SUSPENDUE/EXPIREE), attestation (VALIDE/EN_RENOUVELLEMENT/EXPIREE).
-- **5 types attestation** : Revenu Quebec, ARC, CNESST, CCQ, RBQ.
-- **Score conformite** : 0-100. -10 par licence expiree, -5 par carte, -8 par attestation.
-- **Alertes auto** : 60 jours licences/cartes, 30 jours attestations.
-- **7 endpoints IA Claude Opus 4.7** : analyze / chat / verify-project / search-regulations / predict-renewals / generate-rapport / recommend-formations (markup 30%, max 30k tokens).
-- **8 organismes** references : RBQ, CCQ, CNESST, Revenu Quebec, ARC, ASP Construction, Ombudsman, CMEQ.
-- **Pieces jointes** : BYTEA en DB, PDF/JPG/PNG/WebP, max 10 Mo, MIME et nom sanitises.
-- **Limites** : pas de paie ni cotisations CCQ auto, pas d API directe RBQ/CCQ, pas de declarations mensuelles, pas d ecritures comptables auto, pas de calendrier iCal.
-- **Multi-licences** par tenant : OUI.
-- **Securite IA** : input encadre en XML, URLs sanitisees, credits non factures si reponse invalide.
-- **Verrouillage** : `employee_id` d une carte CCQ non modifiable apres creation.
+### 5.1 Intégration avec le Module 11 (Employés)
+
+- La table `employees` est consultée pour **valider l'existence** d'un employé à la création d'une carte CCQ ; la jointure affiche le nom complet dans le tableau.
+- Si la fiche employé n'existe pas encore (tenant très récent), la jointure est omise et le tableau affiche « #identifiant ».
+- **Aucune synchronisation automatique** : si un employé est supprimé, sa carte CCQ subsiste. Bonne pratique : supprimer la carte en parallèle.
+
+### 5.2 Intégration avec les Projets, l'Immobilier et le Pointage
+
+- **Aucun lien automatique.** Les licences RBQ ne sont pas vérifiées automatiquement à la création d'un projet.
+- L'onglet « Audits et inspections » (vérification IA) s'utilise **manuellement** avant de soumissionner.
+- Les heures CCQ ne sont pas alimentées par le **Module 13 (Pointage)** : le champ « heures accumulées » est saisi à la main.
+- Les indicateurs de conformité de phase du **Module 19 (Immobilier)** sont distincts et sans lien avec les licences enregistrées ici.
+
+### 5.3 Intégration avec la Comptabilité et les Subventions
+
+- **Aucune écriture comptable automatique.** Les cautionnements et les assurances sont informatifs : ce ne sont pas des passifs ou des actifs comptables. À comptabiliser manuellement dans le **Module 15 (Comptabilité)**.
+- Les recommandations de formations de l'IA peuvent évoquer des programmes subventionnés, mais **sans lien** automatique vers le **Module 18 (Subventions)**.
+
+### 5.4 Intégration IA et crédits
+
+- Les 7 outils IA passent par le contrôle de **crédits prépayés** du tenant (mêmes crédits que les autres fonctions IA de l'ERP, voir le **Module 25**).
+- Le coût est journalisé après chaque appel réussi.
+- La saisie de l'utilisateur est encadrée pour prévenir l'injection de consignes ; les liens renvoyés par la recherche sont assainis (seuls `http://` et `https://` sont conservés).
+
+### 5.5 FAQ
+
+**Q : Quelle est la différence entre la RBQ et la CCQ ?**
+R : La **RBQ** délivre des licences aux **entreprises** (une par entité morale). La **CCQ** délivre des cartes de compétence aux **travailleurs individuels** (régime R-20). Une entreprise a une licence RBQ ; chaque ouvrier a sa carte CCQ.
+
+**Q : Le module vérifie-t-il mes numéros de licence auprès du registre officiel de la RBQ ?**
+R : **Non.** Aucune connexion aux registres RBQ ou CCQ. Toute la saisie est manuelle. Pour une vérification officielle, utilisez `rbq.gouv.qc.ca`.
+
+**Q : Combien de catégories RBQ le module connaît-il ?**
+R : **27** sous-catégories, du code 1.1 au code 16, réparties en 7 sous-groupes (voir 4.4). Certains commentaires internes du code disent « 26 », mais la liste réelle en compte 27.
+
+**Q : Le score de conformité tient-il compte des suspensions et des révocations ?**
+R : **Oui.** Une licence révoquée retire 15 points, une licence expirée 10, une licence suspendue 6, une attestation expirée 8, une carte expirée 5, une carte suspendue 3. (C'est une correction : l'ancien barème ne pénalisait que les expirations.)
+
+**Q : Puis-je exporter mes données en Excel, en CSV ou en PDF ?**
+R : **Non.** Il n'y a aucune exportation ni impression des données de conformité. Le seul téléchargement est la **pièce jointe** d'une attestation. Même le **rapport IA** est affiché à l'écran seulement.
+
+**Q : Le module envoie-t-il des rappels par courriel avant les échéances ?**
+R : **Non.** Les alertes sont uniquement visibles dans le tableau de bord. Prenez l'habitude de le consulter (les échéances se surveillent idéalement 60 à 90 jours à l'avance).
+
+**Q : Puis-je téléverser plusieurs fichiers pour une même attestation ?**
+R : **Non.** Une seule pièce jointe par attestation (PDF, JPG, PNG ou WebP, 10 Mo maximum), sans gestion de versions.
+
+**Q : Que se passe-t-il si je téléverse un fichier de plus de 10 Mo ?**
+R : Le serveur le refuse (erreur 413). Compressez le PDF ou réduisez la résolution de l'image. Il n'y a pas de compression automatique.
+
+**Q : Le module gère-t-il les déclarations mensuelles d'heures à la CCQ ?**
+R : **Non.** Le champ « heures accumulées » est un cumul manuel. Pour les déclarations, utilisez le portail employeur de la CCQ.
+
+**Q : Puis-je réaffecter une carte CCQ à un autre employé ?**
+R : **Non**, l'employé est verrouillé après la création. Supprimez la carte et créez-en une nouvelle.
+
+**Q : Puis-je enregistrer plusieurs licences RBQ pour la même entreprise (société mère et filiales) ?**
+R : **Oui.** Chaque licence est indépendante ; il n'y a pas de limite.
+
+**Q : L'onglet « Audits et inspections » sert-il à consigner mes audits ?**
+R : **Non**, malgré son nom. C'est l'outil de **vérification IA** des exigences d'un projet ; il ne sauvegarde rien. De même, l'onglet « Documents légaux » contient exactement les **attestations**.
+
+**Q : Les crédits IA sont-ils consommés si la réponse de l'IA est mauvaise ?**
+R : **Non.** Le débit intervient après validation de la réponse : un appel qui échoue, revient vide ou mal formé n'est pas facturé.
+
+**Q : L'IA garantit-elle la conformité légale ?**
+R : **Non.** Le diagnostic est indicatif. Le prompt système interdit d'inventer des références de loi. Pour les cas critiques, consultez la RBQ, la CCQ ou un conseiller spécialisé.
+
+**Q : Les pièces jointes sont-elles servies de façon sécuritaire ?**
+R : **Oui.** Le téléchargement force l'enregistrement du fichier, le nom est assaini, et le type MIME est revalidé (servi en flux binaire générique s'il sort de la liste autorisée).
+
+**Q : Existe-t-il un journal des modifications (qui a changé quoi) ?**
+R : Les tables conservent la date de création et de dernière modification, mais **pas** de journal détaillé par utilisateur. Utilisez le champ « Notes » pour consigner les changements importants.
+
+**Q : Que faire en cas d'audit de la RBQ ou de la CNESST ?**
+R : Téléchargez vos pièces jointes une par une, générez au besoin un rapport IA (à recopier, car il n'est pas exportable), et conservez vos documents selon les délais légaux applicables au Québec.
 
 ---
 
-**Documentation generee a partir du code** :
-- `backend/routers/conformite.py` (2247 lignes, 7 endpoints IA)
-- `backend/routers/conformite_data.py` (donnees RBQ/CCQ/attestations)
-- `frontend/src/pages/ConformitePage.tsx` (5 onglets, ~1900 lignes)
-- `frontend/src/api/conformite.ts` (interfaces TypeScript)
-- `frontend/src/store/useConformiteStore.ts` (Zustand store)
+## 6. Récapitulatif
 
-**Manuels lies** :
-- Module 11 (Employes — pour creer la fiche employe avant la carte CCQ) — `09-employes.md`
-- Module 19 (Immobilier — conformites de phases construction CNB/CCE/CSST/Municipal distinctes) — `11-immobilier.md`
-- Module 25 (IA — credits IA et configuration globale) — `12-ia.md`
-- Module 28 (Administration — gestion tenant et `check_ai_guard`) — `14-administration.md`
-- Module 18 (Subventions — programmes de subvention salariale CCQ et formations financees) — `21-subventions.md`
+- **Rôle** : registre **manuel** de la conformité réglementaire québécoise — licences RBQ, cartes CCQ, attestations — avec tableau de bord et assistant IA. **Aucune** connexion aux registres officiels.
+- **Accès** : barre latérale → groupe TERRAIN → **RBQ/CCQ** (icône bouclier), route `/conformite`. Onglet ouvert par défaut : **Licences RBQ**.
+- **Six onglets** : Tableau de bord · Licences RBQ · Cartes CCQ · **Documents légaux** (= attestations) · **Audits et inspections** (= vérification IA) · Assistant IA. Attention : les deux libellés en gras sont trompeurs.
+- **Trois entités** : licences RBQ (**27** catégories réparties en 7 groupes), cartes CCQ (**28** métiers à qualifications dynamiques), attestations (**5** types, une pièce jointe PDF ou image de 10 Mo maximum).
+- **Permissions** : consultation pour tous ; écritures licences et cartes réservées à l'**administrateur** ; écritures attestations à l'**administrateur ou au comptable** ; outils IA soumis aux **crédits prépayés**.
+- **Score de conformité** (0-100) : −15 licence révoquée, −10 licence expirée, −6 licence suspendue, −8 attestation expirée, −5 carte expirée, −3 carte suspendue ; 0 si aucune donnée ; badge vert ≥ 80 %, jaune ≥ 50 %, rouge < 50 %.
+- **Alertes** : dans le tableau de bord seulement (licences et cartes à 60 jours, attestations à 30 jours par le point d'accès dédié) ; **aucun rappel** par courriel ou par calendrier.
+- **Sept outils IA** (Claude Opus 4.8, 32 000 jetons, majoration 30 %, non facturés si la réponse échoue) : analyser · chat · vérifier un projet · rechercher · prédire · rapport · formations.
+- **Limites clés** : aucune exportation ni impression (sauf la pièce jointe d'attestation), rapport IA à l'écran seulement, résultats IA éphémères, aucun import en masse, une seule pièce jointe par attestation, employé verrouillé après la création de la carte, pas de paie ni de déclarations CCQ.
+- **31 points d'accès** sous `/api/erp/v1/conformite` ; **3 tables** par tenant créées à la demande.
+
+---
+
+**Documentation générée à partir du code (fichiers vérifiés)** :
+- `ERP_REACT/backend/routers/conformite.py` (2531 lignes, 31 points d'accès dont 7 outils IA)
+- `ERP_REACT/backend/routers/conformite_data.py` (398 lignes, module de données statiques — 27 catégories RBQ, 28 métiers CCQ, 5 types d'attestation, 18 régions, 8 organismes, 6 sections de conseils)
+- `ERP_REACT/frontend/src/pages/ConformitePage.tsx` (3164 lignes, 6 onglets)
+- `ERP_REACT/frontend/src/api/conformite.ts` (587 lignes)
+- `ERP_REACT/frontend/src/store/useConformiteStore.ts` (740 lignes)
+
+**Manuels liés** :
+- Module 11 (Employés — créer la fiche employé avant la carte CCQ) — `11-operations-employes.md`
+- Module 13 (Pointage — les heures ne sont pas synchronisées automatiquement ici) — `13-operations-pointage.md`
+- Module 15 (Comptabilité — comptabilisation manuelle des cautionnements et assurances) — `15-operations-comptabilite.md`
+- Module 18 (Subventions — programmes de formation financés) — `18-terrain-subventions.md`
+- Module 19 (Immobilier — indicateurs de conformité de phase distincts) — `19-terrain-immobilier.md`
+- Module 25 (Assistant IA — crédits IA et fonctionnement général de l'IA) — `25-communication-assistant-ia.md`
+- Module 28 (Configuration — gestion du tenant et des accès) — `28-configuration.md`
