@@ -1,610 +1,767 @@
-# Module 06 — CRM (Companies, Contacts, Opportunities, Ventes)
+# Module 06 — Ventes (CRM, opportunités, pipeline, B2B back-office)
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/crm.py` (2011 lignes, 22 endpoints CRM) + `backend/routers/companies.py` (Companies + Contacts), `frontend/src/pages/CompaniesPage.tsx`, `frontend/src/pages/ContactsPage.tsx`, `frontend/src/pages/VentesPage.tsx` (4 onglets : Pipeline, Opportunites, Historique, Qualification)
-> **Tables PostgreSQL** : `companies`, `contacts`, `opportunities`, `interactions`, `crm_activities`, `prospect_qualifications` (BAT), `opportunity_assignations`, `dossiers` (auto `DOS-OPP-XXXXX`), `dossier_factures` ; FK lecture/ecriture sur `devis.opportunity_id`, `projects.opportunity_id`, `emails.opportunity_id`
-> **Cadrage** : ce module gere le **cycle commercial complet** (entreprises, contacts, opportunites kanban 6 statuts, interactions, activites planifiees, qualification BAT, lead scoring). Il **ne cree pas** de projet directement (la conversion produit un devis brouillon ; le projet est cree par le module Devis a l acceptation client). Il **n envoie pas** d emails ni de notifications automatiques, ne calcule pas de commissions, et ne deduplique pas les contacts.
+> **Version** : 3.0 (refonte complète vérifiée contre le code source 2026-07)
+> **Route frontend** : `/ventes` (menu latéral « Ventes », groupe « Gestion », icône `TrendingUp`). La route `/b2b` redirige vers `/ventes?tab=b2b`.
+> **Préfixe API** : `/api/erp/v1`
+> **Code de référence (backend)** : `backend/routers/crm.py` (2563 lignes, 25 routes CRM) · `backend/routers/ventes_ai.py` (479 lignes, 2 routes — assistant IA Ventes) · `backend/routers/b2b.py` (3017 lignes, 33 routes — back-office B2B) · `backend/routers/b2b_ai.py` (340 lignes — assistant IA B2B en lecture seule)
+> **Code de référence (frontend)** : `frontend/src/pages/VentesPage.tsx` (2914 lignes, 8 onglets) · `frontend/src/pages/B2bPage.tsx` (1411 lignes, 10 sous-onglets) · `frontend/src/components/crm/BATQualificationForm.tsx` (289 lignes) · `frontend/src/components/ventes/VentesAssistantTab.tsx` (232 lignes) · `frontend/src/components/b2b/B2bAssistantTab.tsx` (152 lignes)
+> **Clients API frontend** : `api/crm.ts` (384 lignes), `api/ventesAi.ts` (75 lignes), `api/b2b.ts` (529 lignes), `api/b2bAi.ts` (36 lignes). Note : **`api/ventes.ts` n'existe pas**.
+> **Tables PostgreSQL (par locataire)** : `opportunities`, `interactions`, `crm_activities`, `prospect_qualifications` (B.A.T.), `opportunity_assignations`, `dossiers` (auto `DOS-OPP-…`), `devis` / `devis_lignes` (conversion), `b2b_clients`, `b2b_client_users`, `b2b_demandes`, `b2b_soumissions`, `b2b_contrats`, `b2b_commandes` (+ `b2b_commande_lignes`), `b2b_messages`, `b2b_favoris`, `b2b_notifications`. Tables partagées (chemin IA) : `public.ai_prepaid_credits`, `public.ai_usage_tracking`, `public.ai_credit_ledger`, `public.entreprises`.
+> **Cadrage** : ce module est le **poste de travail commercial** de l'ERP. Il gère le pipeline d'opportunités (Kanban), les relances et le calendrier de suivi, la qualification (pointage automatique et grille B.A.T. manuelle), un assistant IA qui propose des opportunités sur confirmation, et — pour les administrateurs seulement — le **back-office B2B/B2C** (comptes clients du portail, demandes, soumissions, contrats, commandes, messagerie, catalogue). La gestion des **entreprises** et des **contacts** vit dans ses propres pages et manuels (modules 04 et 05). La conversion d'une opportunité produit un **devis brouillon** (module 08), pas un projet directement.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Interface utilisateur](#2-interface-utilisateur)
-3. [Workflows](#3-workflows)
-4. [Reference](#4-reference)
-5. [Integrations et FAQ](#5-integrations-et-faq)
-6. [Recap one-pager](#6-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Workflows pas à pas](#3-workflows-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
-Le module CRM de Constructo AI regroupe quatre entites principales qui couvrent la gestion commerciale complete d une entreprise de construction au Quebec.
+### 1.1 Mission
 
-### 1.1 Entites gerees
+Le module Ventes centralise le **cycle commercial** d'une entreprise de construction, de la prise de contact jusqu'à la signature :
 
-| Entite | Page frontend | Router backend | Prefixe URL |
-|---|---|---|---|
-| Entreprises (Companies) | `CompaniesPage.tsx` | `companies.py` | `/companies` |
-| Contacts | `ContactsPage.tsx` | `companies.py` | `/contacts` |
-| Opportunites | `VentesPage.tsx` (onglet Pipeline / Opportunites) | `crm.py` | `/crm/opportunities` |
-| Interactions / Activites | `VentesPage.tsx` (onglet Historique) | `crm.py` | `/crm/interactions`, `/crm/activities` |
-| Qualification BAT | `BATQualificationForm.tsx` | `crm.py` | `/crm/qualification/bat` |
+- suivre chaque affaire dans un **pipeline visuel** à 6 statuts ;
+- **qualifier** les affaires (à chaud/froid par calcul automatique, ou en détail avec la grille B.A.T.) ;
+- planifier et honorer les **relances** (appels, courriels, visites, tâches) ;
+- **convertir** une opportunité gagnante en soumission (devis) en un clic ;
+- gérer, du côté administrateur, tout le **back-office B2B** relié au portail client externe.
 
-### 1.2 Multi-tenant
+C'est un poste de pilotage : il **ne remplace pas** le module Soumissions (qui chiffre et émet les devis) ni le module Projets (qui exécute les chantiers). Il alimente le premier et prépare le second.
 
-Tous les endpoints exigent un contexte tenant (`user.schema`). Sans schema, l API renvoie HTTP 400 « Contexte tenant manquant ». Aucune donnee n est partagee entre tenants.
+### 1.2 Accès par le menu latéral
 
-### 1.3 Perimetre couvert par ce manuel
+Cliquez sur **Ventes** dans le menu latéral (groupe « Gestion »). La page s'ouvre sur l'onglet **Pipeline** par défaut.
 
-- CRUD complet sur Companies et Contacts
-- Pipeline d opportunites (6 statuts) avec drag-and-drop kanban
-- Conversion d une opportunite en **devis** (NB : c est bien un devis qui est cree, pas un projet directement)
-- Suivi des interactions (5 types) et activites CRM
-- Lead scoring automatique (HOT / WARM / COLD)
-- Grille de qualification BAT (Budget, Autorite, Timing, Compatibilite) sur 100 points
-- Statistiques de pipeline et top clients
-- Calendrier mensuel et timeline chronologique
-- Assignation d employes a une opportunite
+Deux liens rapides existent :
 
-### 1.4 Ce que le module ne fait PAS (verifie dans le code)
+- `app.constructoai.ca/ventes?open=<id>` ouvre directement une opportunité dans l'onglet **Opportunités** (utilisé par les boutons « Ouvrir » ailleurs dans l'ERP).
+- `app.constructoai.ca/ventes?tab=b2b` (ou l'ancienne route `/b2b`) ouvre l'onglet **B2B/B2C**, si vous êtes administrateur.
 
-- Aucun workflow automatique de taches declenche par changement de statut
-- Aucun envoi automatique d email au client
-- Aucune creation automatique de projet (la conversion cree un devis ; le passage devis -> projet releve du module Devis)
-- Aucun calcul de commission ou de remuneration vendeur
-- Pas de soft-delete sur Contact (DELETE = suppression reelle), tandis que Companies utilise un soft-delete (statut `Inactif`)
+### 1.3 Les deux périmètres et les 8 onglets
 
----
+La page regroupe **deux périmètres distincts** sous un seul écran à onglets :
 
-## 2. Interface utilisateur
+| # | Onglet | Périmètre | Visible par |
+|---|--------|-----------|-------------|
+| 1 | **Pipeline** | CRM — Kanban glisser-déposer des opportunités | Tous |
+| 2 | **Relances** | CRM — file des tâches/relances par échéance | Tous |
+| 3 | **Opportunités** | CRM — tableau paginé + panneau de détail | Tous |
+| 4 | **Calendrier** | CRM — vue mensuelle des événements | Tous |
+| 5 | **Historique** | CRM — fil chronologique interactions + activités | Tous |
+| 6 | **Qualification** | CRM — pointage automatique + grille B.A.T. | Tous |
+| 7 | **Assistant IA** | CRM — clavardage qui propose des opportunités sur confirmation | Tous |
+| 8 | **B2B/B2C** | Back-office B2B (10 sous-onglets) | **Administrateurs seulement** |
 
-### 2.1 Page Entreprises (`/companies`)
+L'onglet **B2B/B2C** est masqué dans la barre d'onglets ET non chargé pour un utilisateur non-administrateur (double protection, `VentesPage.tsx:276,313`).
 
-Page principale pour gerer les entreprises clientes, fournisseurs, sous-traitants et partenaires.
+Un **badge rouge** apparaît sur l'onglet **Relances** avec le nombre de relances dues (en retard + aujourd'hui), pour que vous sachiez d'un coup d'œil qu'il y a du suivi à faire.
 
-**Mise en page** :
-- Bandeau de stats en haut : Total / Clients / Fournisseurs / Sous-traitants
-- CommandBar : bouton « Nouvelle entreprise », « Rafraichir », champ de recherche, filtre par type
-- Liste paginee (20 par page) en table desktop, cartes en mobile
-- Panneau de detail a droite (desktop) ou plein ecran (mobile) au clic sur une ligne
+### 1.4 Permissions et rôles
 
-**Colonnes** : Nom, Type, Contact (telephone), Ville, Actions. Triables et redimensionnables.
+Le module applique **trois niveaux de permission** distincts. C'est une nuance importante : lire, écrire dans le CRM, et administrer le B2B ne demandent pas les mêmes droits.
 
-**Recherche** : insensible a la casse, sur `nom`, `email`, `ville`.
+| Niveau | Ce qui est protégé | Règle (`backend`) | Qui a le droit |
+|--------|--------------------|--------------------|----------------|
+| **Lecture** (CRM + B2B) | Voir opportunités, pipeline, relances, calendrier, statistiques, listes B2B | `get_current_user` (`erp_auth.py:475`) | Tout compte ERP valide. Les jetons de client B2B (portail externe) sont refusés (403). |
+| **Écriture CRM** | Créer/modifier/supprimer opportunités, interactions, activités, qualification, conversion en devis | `require_crm_write` (`crm.py:40`) | `super_admin`, ou rôle dans `{admin, gestionnaire, contremaitre, user}`. **Le rôle `user` (opérateur principal) est autorisé.** `employee` et `comptable` sont **refusés** (403). |
+| **Écriture B2B** | Créer clients/demandes/soumissions/contrats, approuver des accès, changer un statut de commande | `require_tenant_admin_or_role()` (`erp_auth.py:720`) | `is_admin` (relu côté serveur, infalsifiable) OU rôle `admin` OU `super_admin`. **Plus strict** : un `user` non-administrateur est **refusé**. |
 
-**Filtre Type** : 14 options (TYPE_ENTREPRISE_OPTIONS) plus « Tous les types ».
+Autrement dit : un employé avec le rôle `user` peut travailler tout le CRM (pipeline, relances, conversion en devis) mais **ne peut pas** entrer dans le back-office B2B ni administrer les accès au portail.
 
-#### 2.1.1 Liste exacte des 14 types d entreprise
+**Mode consultation (lecture seule).** Si l'abonnement Stripe du locataire est en souffrance, le compte peut basculer en mode **readonly** (les lectures passent, toute écriture renvoie 403) ou **blocked** (401). Ce contrôle est appliqué en amont, dans `get_current_user` (`erp_auth.py:520-530`, cache 60 s), et couvre **tous** les endpoints du module, y compris l'assistant IA. Un bandeau « Mode consultation » s'affiche alors dans l'interface.
 
-| # | Valeur DB |
-|---|---|
-| 1 | Entrepreneur general |
-| 2 | Sous-traitant specialise |
-| 3 | Promoteur immobilier |
-| 4 | Fournisseur materiaux |
-| 5 | Consultant/Ingenieur |
-| 6 | Architecte |
-| 7 | Arpenteur-geometre |
-| 8 | Organisme de controle |
-| 9 | Institution financiere |
-| 10 | Assureur |
-| 11 | Client residentiel |
-| 12 | Client commercial |
-| 13 | Client industriel |
-| 14 | Municipalite |
+### 1.5 Ce que le module ne fait pas (vérifié dans le code)
 
-Defaut : `Entrepreneur general`.
-
-#### 2.1.2 Liste des 17 secteurs d activite (plus l option vide)
-
-1. Construction residentielle
-2. Construction commerciale
-3. Construction industrielle
-4. Renovation residentielle
-5. Renovation commerciale
-6. Excavation et terrassement
-7. Fondations specialisees
-8. Charpenterie generale
-9. Couverture et toiture
-10. Plomberie et chauffage
-11. Electricite du batiment
-12. Isolation et etancheite
-13. Revetements exterieurs
-14. Finition interieure
-15. Amenagement paysager
-16. Demolition
-17. Location d equipements
-18. Transport construction
-
-(Total = 17 secteurs selectionnables, plus l option vide par defaut.)
-
-#### 2.1.3 Champs du formulaire Entreprise
-
-- `nom` (obligatoire, valide non vide)
-- `typeCompany` (defaut « Entrepreneur general »)
-- `secteurActivite`
-- `email`, `telephone`, `siteWeb`
-- `adresse`, `ville`, `province` (defaut « Quebec »), `codePostal`, `pays` (defaut « Canada »)
-- `contactPrincipalId` (reference un contact existant)
-- `numeroTps`, `numeroTvq` (numeros de taxes du client)
-- `paymentTerms` (texte libre, defaut « Net 30 »)
-- `notes`
-- `statut` (modifiable seulement via UPDATE)
-
-NB : `numeroTps`, `numeroTvq`, `paymentTerms` existent dans le modele backend mais ne sont **pas affiches** dans le formulaire `CompaniesPage.tsx` actuel. Pour les saisir, passer par l API directe.
-
-#### 2.1.4 Suppression
-
-Suppression = soft-delete : `UPDATE companies SET statut = 'Inactif'`. L entreprise n est jamais supprimee physiquement.
-
-### 2.2 Page Contacts (`/contacts`)
-
-Liste tous les contacts toutes entreprises confondues.
-
-**Stats** : Contacts (total) / Entreprises distinctes / Avec Email / Avec Tel.
-
-**Colonnes** : Nom (+initiales), Entreprise, Role/Fonction, Email, Telephone, Actions.
-
-**Recherche** : sur `prenom + nom_famille` et `email` (cote backend).
-
-#### 2.2.1 Champs du formulaire Contact
-
-| Champ backend | Cree | Modifier | Obligatoire |
-|---|---|---|---|
-| `company_id` | Oui (dropdown) | Oui | Non |
-| `prenom` | Oui | Oui | **Oui** |
-| `nom_famille` | Oui | Oui | **Oui** |
-| `email` | Oui | Oui | Non |
-| `telephone` | Oui | Oui | Non |
-| `mobile` | Oui | Oui | Non |
-| `role_poste` | Oui | Oui | Non |
-| `fonction` | Non | **Oui** | Non |
-| `departement` | Non | **Oui** | Non |
-| `adresse, ville, province, code_postal` | Oui | Oui | Non |
-| `est_principal` | Non (formulaire) | Non (formulaire) | Defaut `false` |
-| `notes` | Oui | Oui | Non |
-
-Notes :
-- `mobile` distinct de `telephone` (deux colonnes BD).
-- Colonnes adresse ajoutees dynamiquement par `_ensure_contact_address_cols` au premier acces.
-- `est_principal` n est pas modifiable via l UI standard. Affichage : badge bleu « Principal ».
-- `company_id <= 0` normalise a `NULL` cote backend.
-
-#### 2.2.2 Suppression
-
-Suppression reelle (`DELETE FROM contacts`). Pas de soft-delete sur les contacts.
-
-### 2.3 Page Ventes (`/ventes`)
-
-4 onglets : `Pipeline`, `Opportunites`, `Historique`, `Qualification`.
-
-**Bandeau KPI permanent** (alimente par `/crm/stats`) :
-- Opportunites (total / en cours)
-- Taux de conversion (%) = `gagnes / (gagnes + perdus) * 100`
-- Montant gagne + montant pipeline en cours
-- Delai moyen de fermeture GAGNE (jours)
-
-#### 2.3.1 Onglet Pipeline (kanban)
-
-- 4 colonnes actives : `PROSPECTION` / `QUALIFICATION` / `PROPOSITION` / `NEGOCIATION`
-- 2 zones de drop sommaires en haut : `GAGNE` (vert) et `PERDU` (rouge)
-- Drag-and-drop entre colonnes : `PUT /crm/opportunities/{id}` avec rollback optimiste
-- Drag-and-drop dans une meme colonne : reordonne via `PUT /crm/opportunities/reorder`
-- Double-clic sur une carte : ouvre la modale de detail
-
-**Carte d opportunite** : nom, numero `OPP-XXXXX`, entreprise, montant, probabilite, date cloture, score BAT (categorie A+/A/B/C/D), boutons rapides « Avancer », « Gagne », « Perdu ».
-
-#### 2.3.2 Onglet Opportunites (table)
-
-- Liste paginee 20/page avec recherche (sur `nom`, `notes`, `source`) et filtre statut
-- Colonnes : N° / Nom / Entreprise / Montant / Probabilite / Statut / Fermeture
-- Selection ligne -> panneau lateral avec mode lecture / edition inline
-- Bouton « Creer une soumission » convertit l opportunite en devis
-
-#### 2.3.3 Onglet Historique (timeline)
-
-`GET /crm/timeline` : UNION chronologique des `interactions` et `crm_activities`. Limite 50 par defaut, max 200.
-
-#### 2.3.4 Onglet Qualification
-
-Liste les opportunites scorees (HOT / WARM / COLD) selon scoring auto, et permet d ouvrir la grille manuelle BAT.
-
-#### 2.3.5 Champs du formulaire Opportunite
-
-- `nom` (obligatoire)
-- `poClient`, `companyId`, `contactId`, `clientNomDirect`
-- `statut` (defaut `PROSPECTION`)
-- `priorite` : BASSE / NORMAL / HAUTE / URGENTE (defaut `NORMAL`)
-- `source` (texte libre)
-- `dateSoumission`, `dateDebutPrevu`, `dateFinPrevue`, `dateCloturePrevue`
-- `montantEstime`, `probabilite` (slider 0-100, pas 5, defaut 50)
-- `description`, `notes`
-
-A la creation : `numero_opportunite` `OPP-XXXXX` genere + dossier client `DOS-OPP-XXXXX` (best-effort).
+- **Aucun export PDF/CSV, aucune impression, aucun téléversement de fichier** dans tout le module Ventes/B2B (contrairement au module Suivi/Gantt). Les documents (devis PDF, contrats) se génèrent depuis les modules Soumissions/Dossiers.
+- **Aucune création automatique de projet** : la conversion crée un devis brouillon ; le passage devis → projet relève du module Soumissions/Projets.
+- **Aucun envoi automatique de courriel ni de notification** déclenché par un changement de statut d'opportunité.
+- **Aucun calcul de commission** ni de rémunération vendeur.
+- **Aucune interface d'assignation d'employé à une opportunité** : les fonctions existent côté API (`crm.ts:353-365`) mais ne sont appelées nulle part dans l'écran Ventes (surface morte, voir FAQ).
+- **Aucune création de commande côté administrateur** : le catalogue B2B est **consultatif** ; les commandes se créent depuis le **portail client externe** (`/b2b-portal`).
+- L'assistant IA Ventes **ne crée que des opportunités** (aucune autre action), et **seulement après confirmation** de votre part.
 
 ---
 
-## 3. Workflows
+## 2. Interface
 
-### 3.1 Cycle de vie d une opportunite
+### 2.1 En-tête des indicateurs et barre d'onglets
 
-Les **6 statuts officiels** (`OPPORTUNITY_STATUSES`) :
+En haut de la page, **quatre indicateurs** (KPI) restent visibles quel que soit l'onglet (`VentesPage.tsx:248-270`, source `GET /crm/stats`) :
 
-```
-PROSPECTION -> QUALIFICATION -> PROPOSITION -> NEGOCIATION -> GAGNE
-                                                          \-> PERDU
-```
+| Indicateur | Signification |
+|------------|---------------|
+| **Opportunités** | Nombre total d'opportunités (avec la part « en cours »). |
+| **Taux de conversion** | `gagnées / (gagnées + perdues) × 100`. |
+| **Montant gagné** | Somme des `montant_estime` des opportunités GAGNE. |
+| **Délai moyen** | Durée moyenne (jours) entre création et clôture des opportunités GAGNE. |
 
-Stockage en majuscules ASCII. Le backend gere une migration `_ensure_opportunities_statut_check` qui resynchronise la contrainte CHECK pour les tenants legacy.
+Sous les indicateurs, la **barre d'onglets** (les 8 onglets ci-dessus). L'onglet actif est surligné.
 
-Les transitions sont **libres** : on peut passer de n importe quel statut a n importe quel autre par drag-and-drop ou boutons rapides.
+### 2.2 Onglet Pipeline (Kanban)
 
-### 3.2 Conversion opportunite -> devis
+Vue Kanban en glisser-déposer. Il existe **6 statuts** au total, mais l'affichage les répartit ainsi :
 
-Endpoint : `POST /crm/opportunities/{opportunity_id}/create-devis`.
+- **4 colonnes actives, glissables** : Prospection → Qualification → Proposition → Négociation.
+- **2 cartes-résumé** en haut de l'écran : **Gagné** (vert) et **Perdu** (rouge). Elles affichent le montant total et le nombre d'opportunités du statut, et servent aussi de **cibles de dépôt** : glisser une carte dessus la marque gagnée ou perdue.
 
-**Important : la conversion cree un DEVIS, pas un projet.**
+> **Nuance importante** : Gagné et Perdu ne sont pas des colonnes du tableau, ce sont des zones de synthèse. Les 6 statuts existent bien en base ; seuls les 4 premiers ont une colonne.
 
-Etapes backend :
+**En-tête de chaque colonne** : badge de statut coloré + compteur d'opportunités + montant total de l'étape (source `GET /crm/pipeline`, agrégé par statut).
 
-1. Refus si l opportunite a deja un `devis_id` (HTTP 400).
-2. Recuperation du `nom` de l entreprise comme `client_nom_cache`.
-3. Calcul des marges sur le `montant_estime` :
-   - **Administration = montant * 3 %**
-   - **Contingences = montant * 12 %**
-   - **Profit = montant * 15 %**
-   - `total_avant_taxes = montant + administration + contingences + profit`
-4. Calcul des taxes :
-   - **TPS = total_avant_taxes * 5 %**
-   - **TVQ = total_avant_taxes * 9.975 %**
-5. Creation du devis :
-   - `numero_devis` : `TEMP` puis `DEV-{annee}-{id:03d}`
-   - `statut` : `Brouillon`
-   - `type_soumission` : `Detaillee`
-   - `validation_token` aleatoire (32 caracteres URL-safe)
-6. Mise a jour opportunite : `devis_id = nouveau_id` + `statut = PROPOSITION`.
-7. Tentative association `dossier_devis` (best-effort).
+**Boutons de création** :
 
-Apres succes, redirection vers `/devis`.
+- **Nouvelle opportunité** (au-dessus du Kanban) ouvre la modale de création vierge.
+- **Ajouter** (en pied de chaque colonne) ouvre la même modale mais **préremplit le statut** de la colonne.
 
-### 3.3 Suppression d une opportunite
+**La carte d'opportunité** (`PipelineCard`) affiche :
 
-Endpoint : `DELETE /crm/opportunities/{opportunity_id}`.
+- le **nom** de l'affaire et son numéro (`OPP-00001`) ;
+- le nom de l'**entreprise** cliente ;
+- le **montant estimé** et la **probabilité** (%) ;
+- la **date de clôture** prévue ;
+- le **score B.A.T.** : badge coloré `X/100` + catégorie **A+/A/B/C/D**. Si l'opportunité provient d'une pré-qualification de l'agent vocal (statut interne EN_COURS), la carte affiche « B.A.T. préliminaire / à compléter » au lieu d'un score ;
+- un bouton **œil** « Ouvrir le détail » ;
+- des **pastilles d'action rapide** : « Avancer vers <statut suivant> » (flèche), « Gagné », « Perdu ».
 
-1. Lock de la ligne (`SELECT ... FOR UPDATE`).
-2. **Suppression cascade** : `interactions`, `crm_activities`, `opportunity_assignations`, `prospect_qualifications`.
-3. **Detachement** (SET NULL) : `devis.opportunity_id`, `projects.opportunity_id`, `emails.opportunity_id`. Devis et projet conserves.
-4. Suppression de l opportunite.
+**Glisser-déposer** :
 
-Frontend affiche confirmation avec liens existants : « Une soumission est liee (sera detachee, pas supprimee) ».
+- **Entre deux colonnes** = changement de statut. La carte bouge immédiatement (affichage optimiste) ; si l'enregistrement échoue, elle revient à sa place (retour arrière automatique).
+- **Dans la même colonne** = **réordonnancement** de la priorité d'affichage. L'ordre est persisté via `PUT /crm/opportunities/reorder` (charge utile `{orderedIds}`). En cas d'échec, l'ordre précédent est restauré.
 
-### 3.4 Creation d une interaction
+**Ouvrir le détail** : double-cliquez sur une carte, ou cliquez sur l'œil. La **modale de détail** s'ouvre (voir 2.5).
 
-Endpoint : `POST /crm/interactions`.
+**Supprimer** : depuis le détail, la suppression demande une confirmation native. Si un devis ou un projet est lié, l'avertissement précise qu'il sera **détaché** (et non supprimé).
 
-Champs : `type_interaction` (parmi INTERACTION_TYPES), `resume` (obligatoire), `details`, `date_interaction` (defaut CURRENT_TIMESTAMP), `suivi_prevu`, `company_id`, `contact_id`, `opportunity_id`.
+### 2.3 Onglet Opportunités (tableau)
 
-**Aucun workflow automatique** declenche par la creation.
+Vue tableau paginée (20 par page) avec un panneau de détail latéral.
 
-### 3.5 Creation d une activite CRM
+**Barre de commande** :
 
-Endpoint : `POST /crm/activities`. Table `crm_activities` creee a la volee.
+- bouton **Nouvelle opportunité** ;
+- champ de **recherche** (« Rechercher... ») — porte sur le nom, la source, les notes ; une garde de séquence empêche qu'une réponse en retard écrase une recherche plus récente ;
+- filtre **statut** (« Tous les statuts » ou l'une des 6 valeurs).
 
-Champs : `type_activite`, `sujet` (obligatoire), `description`, `date_activite`, `duree_minutes`, `company_id`, `contact_id`, `opportunity_id`. Statut initial : `PLANIFIE`.
+**Colonnes (bureau)** : No. · Nom (+ source) · Entreprise · Montant · Prob. · Statut (badge) · Fermeture. Si la liste est vide : « Aucune opportunité trouvée ».
 
-### 3.6 Lead scoring automatique
+**Cartes (mobile)** : nom, badge de statut, entreprise, montant, probabilité, date.
 
-Endpoint : `GET /crm/qualification`. Calcule a chaque appel sur les opportunites non `GAGNE`/`PERDU`.
+Un **compteur total** et la **pagination** figurent en bas.
 
-Bareme :
+**Panneau de détail** (au clic sur une ligne, source `GET /crm/opportunities/{id}`) : sur bureau, il occupe environ 40 % à droite ; sur mobile, il passe en plein écran avec un bouton **Retour**. On y trouve les boutons **Modifier** (crayon), **Supprimer**, **Fermer**, ainsi que : entreprise, contact, montant, probabilité, date de clôture, source, notes, date « Créé le », les boutons **Créer une soumission** et **Voir le dossier**, la liste des **interactions** et la **grille B.A.T.**
 
-| Critere | Points |
-|---|---|
-| `montant_estime > 0` | +20 |
-| `company_id` renseigne | +15 |
-| `contact_id` renseigne | +10 |
-| `probabilite > 50` | +20 |
-| Au moins 1 interaction liee | +15 |
-| `source` renseignee | +10 |
-| Mise a jour < 30 jours | +10 |
+**Mode édition** (bouton Modifier) : formulaire avec Nom, Statut, Montant estimé, Probabilité (0-100), Date de fermeture, Entreprise (menu déroulant), Source, Notes → `PUT /crm/opportunities/{id}`. Boutons **Enregistrer** / **Annuler**.
 
-Categories :
-- `HOT` : score >= 70
-- `WARM` : score >= 40
-- `COLD` : sinon
+### 2.4 Modale de création d'opportunité
 
-### 3.7 Grille BAT manuelle
+Ouverte par « Nouvelle opportunité » (ou « Ajouter »). Deux colonnes.
 
-Endpoints : `GET /crm/qualification/bat/{opportunity_id}`, `POST /crm/qualification/bat`, `GET /crm/qualification/bat/all`.
+**Colonne de gauche** :
 
-4 sections, 25 points chacune, total **100 pts** :
+| Champ | Note |
+|-------|------|
+| **Nom de l'opportunité** * | Obligatoire (ex. « Rénovation cuisine Dupont »). |
+| No. PO Client | Numéro de bon de commande du client, optionnel. |
+| Client (Entreprise) | Menu déroulant des entreprises (chargé via `listCompanies`, 100 par page). |
+| Client (Personne) | Menu déroulant des contacts. |
+| Saisie manuelle | Pour un client hors CRM (nom libre). |
+| Statut | Défaut Prospection (ou le statut de la colonne si ouverte par « Ajouter »). |
+| Priorité | Basse / Normale / Haute / Urgente. |
 
-- **Section A -- Budget** : 3 questions (A1 budget identifie 10, A2 financement 10, A3 historique 5)
-- **Section B -- Autorite** : 3 questions (B1 decideur identifie 10, B2 disponibilite 10, B3 processus 5)
-- **Section C -- Timing** : 3 questions (C1 demarrage 10, C2 motivation 10, C3 disponibilite 5)
-- **Section D -- Compatibilite** : 4 questions (D1 expertise 10, D2 communication 5, D3 attentes 5, D4 feeling 5)
+**Colonne de droite** :
 
-**Categories verifiees frontend** :
+| Champ | Note |
+|-------|------|
+| Source | Texte libre (ex. « Site web, Recommandation, Salon... »). |
+| Date limite de soumission | Optionnelle. |
+| Début / Fin prévue des travaux | Optionnelles. |
+| Montant estimé ($) | 0 à 1 000 000 000. |
+| Probabilité | Curseur 0-100, pas de 5. |
+| Date de clôture prévue | Optionnelle. |
+| Description | Zone de texte. |
+| Notes | Zone de texte. |
 
-| Score total | Categorie | Couleur | Action recommandee |
-|---|---|---|---|
-| >= 90 | A+ | vert | Priorite maximale - Visite 48-72h |
-| 75 - 89 | A | vert | Priorite haute |
-| 50 - 74 | B | jaune | Potentiel - Approfondir |
-| 25 - 49 | C | rouge | Tiede - Maintenir contact |
-| < 25 | D | gris | Froid - Pas prioritaire |
+Une note « * Champs obligatoires » et les boutons **Annuler** / **Enregistrer** (→ `POST /crm/opportunities`) ferment la modale.
 
-**Important** : grille BAT utilise A+/A/B/C/D (5 niveaux), distinct du lead scoring auto HOT/WARM/COLD (3 niveaux).
+À la création, le système génère le numéro `OPP-00001`, ainsi qu'un **dossier client** `DOS-OPP-…` de type CLIENT (au mieux, voir module 07).
 
-### 3.8 Assignation d employes a une opportunite
+### 2.5 Modale de détail (Vue / Édition / Historique / B.A.T.)
 
-Endpoints :
-- `GET /crm/opportunities/{opp_id}/assignations`
-- `POST /crm/opportunities/{opp_id}/assignations` body `{ employee_id, role }`
-- `DELETE /crm/opportunities/{opp_id}/assignations/{assignation_id}`
+Accessible depuis le Pipeline (double-clic/œil) et depuis Opportunités (clic ligne). Taille large. Elle comporte plusieurs zones :
 
-Contrainte UNIQUE `(opportunity_id, employee_id)` : un employe ne peut etre assigne deux fois (HTTP 409).
+**a) Vue** — numéro + badge de statut, nom, entreprise, contact, montant estimé, barre de probabilité, date de clôture, source, notes. Deux boutons d'action :
+
+- **Créer une soumission** → `POST /crm/opportunities/{id}/create-devis`, puis redirection vers `/devis?open=<devisId>`. Si l'opportunité est déjà convertie, le serveur répond « déjà convertie en devis #X » et ce détail s'affiche.
+- **Voir le dossier** (si un dossier est lié) → `/dossiers?open=…`.
+
+**b) Édition** — mêmes champs que la création (formulaire 2 colonnes). Boutons Modifier / Supprimer.
+
+**c) Fil interactions + activités** — fil chronologique **fusionné** des interactions et des activités de l'opportunité. Deux liens en tête, **Interaction** et **Activité**, ouvrent un **formulaire en ligne** :
+
+| Champ | Détail |
+|-------|--------|
+| Type | Menu déroulant (types d'interaction ou d'activité). |
+| Date | Date de l'événement. |
+| Résumé / Sujet | Texte. |
+| Ajouter | → `POST /crm/interactions` ou `POST /crm/activities`. |
+
+Chaque élément du fil affiche : badge de type + titre + sous-texte + date + badge Inter./Act. + statut de l'activité.
+
+**d) Grille B.A.T.** — la grille de qualification manuelle (voir 2.9) est intégrée directement dans la modale.
+
+**Suppression** : le bouton Supprimer déclenche une confirmation native. La suppression **détache** (ne supprime pas) le devis/projet lié ; elle supprime en cascade les interactions, activités, assignations et qualifications de l'opportunité.
+
+### 2.6 Onglet Relances
+
+File de suivi de vos tâches et relances, triée par échéance. Sous-titre : « Vos relances et tâches à faire, par échéance. » (source `GET /crm/relances?horizonDays=7`).
+
+**Trois tranches** :
+
+| Tranche | Couleur | Contenu |
+|---------|---------|---------|
+| **En retard** | Rouge | Relances dont l'échéance est passée. |
+| **Aujourd'hui** | Bleu | Relances du jour. |
+| **À venir (7 jours)** | Gris | Relances des 7 prochains jours. |
+
+Chaque **carte de relance** affiche : badge du type d'activité + date + sujet + opportunité/entreprise liée + badge de statut de l'opportunité. Trois actions :
+
+- **Fait** → marque l'activité terminée (`PATCH /crm/activities/{id}`, statut TERMINE) ;
+- **Reporter** → un champ de date en ligne apparaît (Confirmer / Annuler) pour déplacer l'échéance ;
+- **Ouvrir** → ouvre l'opportunité (`/ventes?open=<id>`).
+
+Si rien n'est planifié : « Aucune relance planifiée » avec une astuce.
+
+### 2.7 Onglet Calendrier
+
+Grille mensuelle (semaine du lundi au dimanche). Navigation **mois précédent / mois suivant** + bouton **Aujourd'hui** (source `GET /crm/calendar?year&month`).
+
+**Trois types d'événements** avec légende colorée :
+
+| Type | Couleur | Source |
+|------|---------|--------|
+| Interaction | Bleu | Date de l'interaction. |
+| Activité | Violet | Date de l'activité. |
+| Clôture opp. | Orange | Date de clôture prévue d'une opportunité. |
+
+Chaque **cellule-jour** affiche jusqu'à 3 événements, puis « +N autres ». Cliquer sur un jour ouvre un **panneau latéral** listant tous les événements de ce jour (type + titre + badge de sous-type).
+
+### 2.8 Onglet Historique
+
+Fil chronologique de **toutes** les interactions et activités du locataire (source `GET /crm/timeline?limit=50`, max 200). Un **filtre par entreprise** (menu déroulant) permet de restreindre l'affichage.
+
+Chaque carte : icône selon le type/sous-type, badge Interaction/Activité, sous-type, entreprise, titre, date. Un compteur total figure en tête. Si vide : « Aucun événement dans l'historique ».
+
+> Les interactions et activités se **saisissent** uniquement depuis le détail d'une opportunité (2.5). L'Historique et le Calendrier sont des vues de consultation.
+
+### 2.9 Onglet Qualification et grille B.A.T.
+
+Deux mécanismes de qualification cohabitent : le **pointage automatique** (cet onglet) et la **grille B.A.T. manuelle** (intégrée aux modales de détail).
+
+**Pointage automatique** (source `GET /crm/qualification`) — score de 0 à 100 calculé à la volée sur les opportunités **ouvertes** (ni GAGNE ni PERDU) :
+
+**Trois cartes-résumé** en tête, avec compteur : **Chaud** (HOT, rouge), **Tiède** (WARM, orange), **Froid** (COLD, bleu).
+
+**Tableau** : Opportunité · Score (barre) · Catégorie (badge) · Montant · Probabilité · **Détails** (puces expliquant le score : montant, entreprise liée, contact lié, probabilité, interactions, source, récent, inactif). Cliquer une ligne ouvre l'opportunité. Si vide : « Aucune opportunité ouverte à qualifier ».
+
+**Grille de Pointage B.A.T. (qualification manuelle).** Composant intégré dans les modales de détail (Pipeline et Opportunités). Score sur 100, réparti en **4 sections repliables** de 25 points chacune, **13 questions** au total (boutons radio) :
+
+| Section | Points | Questions | Icône |
+|---------|--------|-----------|-------|
+| **A. Budget** | 25 | A1 (10), A2 (10), A3 (5) | `DollarSign` |
+| **B. Autorité** | 25 | B1 (10), B2 (10), B3 (5) | `Users` |
+| **C. Timing** | 25 | C1 (10), C2 (10), C3 (5) | `Clock` |
+| **D. Compatibilité** | 25 | D1 (10), D2 (5), D3 (5), D4 (5) | `Target` |
+
+Le score total donne une **catégorie** et une **action recommandée** (voir 4.7). Un champ **Notes de qualification** (optionnel) et le bouton **Enregistrer la qualification** (→ `POST /crm/qualification/bat`) finalisent la saisie.
+
+> **Le serveur recalcule** le score total et la catégorie à partir des réponses envoyées ; il ne fait pas confiance aux valeurs calculées par le navigateur. Les scores agrégés affichés sur les cartes du Kanban proviennent de `GET /crm/qualification/bat/all`.
+
+### 2.10 Onglet Assistant IA — Ventes
+
+Clavardage dédié. Titre « Assistant IA — Ventes », sous-titre « Analyse ton pipeline et crée des opportunités sur confirmation. ». Il utilise `api/ventesAi.ts` (`POST /ventes/ai/chat` et `POST /ventes/ai/confirm-action`).
+
+**Fonctionnement en deux temps** :
+
+1. Vous posez une question ou une demande. L'IA **lit vos données réelles** (opportunités, entreprises, contacts) et répond. Si elle propose de créer une opportunité, elle affiche une **carte de proposition** (titre + aperçu des champs) avec la mention « En attente de confirmation ».
+2. Vous cliquez **Confirmer** (l'opportunité est réellement créée) ou **Annuler** (rien ne se passe). **Seul le clic Confirmer écrit en base.**
+
+Trois exemples d'amorce sont proposés. La saisie envoie avec **Entrée** ; des verrous empêchent le double-envoi. Chaque message affiche ses métadonnées (profil « Ventes », jetons, coût en USD, durée).
+
+> L'assistant Ventes **ne crée que des opportunités** — aucune autre action. Il applique les mêmes droits que le CRM : la création confirmée revérifie `require_crm_write` côté serveur, donc un `employee`/`comptable` ne peut pas créer d'opportunité même via l'IA.
+
+### 2.11 Onglet B2B/B2C (administrateurs seulement)
+
+Titre « Espace B2B ». C'est le **back-office** du portail client externe (`/b2b-portal`). Il comporte **10 sous-onglets** :
+
+#### a) Tableau de bord
+
+4 indicateurs (Clients actifs, Demandes nouvelles, Contrats actifs, Valeur contrats) + « Demandes par statut » + « Résumé » (totaux) + « Activité récente » (source `GET /b2b/stats`). Le compteur de « messages non lus » compte les messages **écrits par un client** (non lus).
+
+#### b) Demandes d'accès
+
+Flux d'approbation des inscriptions au portail. Deux sous-onglets, **En attente** / **Approuvés** (avec compteurs). Tableau : Entreprise · Contact · Courriel · Téléphone · Ville · Date · Actions.
+
+- Pour un compte **en attente** : **Approuver** (active le compte et réactive l'entreprise cliente) ou **Rejeter** (supprime la demande).
+- Pour un compte **approuvé** : **Désactiver** (révoque l'accès).
+
+Endpoints : `PUT /b2b/client-users/{id}/approve | reject | deactivate`. Chaque action demande une confirmation.
+
+#### c) Clients
+
+Recherche + bouton **Nouveau client**. Tableau : Nom · Contact · Courriel · Téléphone · **Entreprise CRM** · Statut · Actions.
+
+- **Lier à une entreprise CRM** (icône `Link2`) : ouvre une modale de recherche d'entreprise. Ce lien alimente le **suivi du portail** (le client voit ses devis/projets). Le lien est **toujours posé manuellement** par l'administrateur — **jamais** d'auto-liaison par courriel (protection contre l'usurpation).
+- **Désactiver** (corbeille) → `DELETE /b2b/clients/{id}` (désactivation logique en cascade sur les accès).
+
+Modale de création : Nom entreprise * · Nom contact · Courriel · Téléphone · Ville · Secteur (→ `POST /b2b/clients`).
+
+#### d) Demandes
+
+Filtre de statut (Tous / Nouvelle / En cours / Soumise / Acceptée / Refusée / Annulée) + bouton **Nouvelle demande**. Tableau : Titre · Client · Budget · Statut · Date. Le clic ouvre un **panneau de détail** (client, catégorie, budget, priorité, chantier, description) avec un bouton **Créer soumission** et la liste des soumissions liées.
+
+Modale de création : Client * · Titre * · Description · Catégorie · Budget estimé · Date limite · Priorité · Adresse/Ville du chantier (→ `POST /b2b/demandes`).
+Modale de soumission : **Montant HT** * · Description · Délai (jours) · Validité (jours) · Conditions de paiement · Garanties (→ `POST /b2b/soumissions`).
+
+#### e) Soumissions
+
+Filtre de statut (Tous / Brouillon / Soumise / En évaluation / Acceptée / Refusée). Tableau : Demande · Client · Montant · Délai · Statut · Actions.
+
+- **Accepter** (✓) → `PUT /b2b/soumissions/{id}/accepter` : marque la soumission acceptée, **refuse automatiquement les autres soumissions** de la même demande, et **crée un contrat** actif.
+- **Refuser** (✗) → `PUT /b2b/soumissions/{id}/refuser`.
+
+Ces actions sont indisponibles si la soumission est déjà Acceptée / Refusée / Expirée.
+
+#### f) Contrats
+
+Filtre de statut (Tous / Brouillon / Actif / Terminé / Annulé). Tableau : Numéro · Titre · Client · Montant · **Avancement** (barre) · Statut · Actions. Le bouton **Modifier** ouvre une modale : Statut · Avancement (%) · Montant payé · Notes internes (→ `PUT /b2b/contrats/{id}`).
+
+#### g) Commandes
+
+Filtre de statut (7 valeurs). **Vue liste** : Numéro · Total TTC · Ville · Statut · Date · Action. **Vue détail** : lignes de produits, sous-total, TPS, TVQ, Total TTC.
+
+- **Avancer au statut suivant** : EN_ATTENTE → CONFIRMEE → EN_PREPARATION → EXPEDIEE → LIVREE (`PUT /b2b/commandes/{id}/statut`).
+- **Annuler** : demande une confirmation (« stock réservé réapprovisionné »). Passer une commande à ANNULEE **restitue le stock** ; ANNULEE est un statut **terminal**.
+
+> Les commandes se **créent** depuis le portail client externe, pas ici. Ce sous-onglet ne fait que suivre et faire avancer les commandes existantes.
+
+#### h) Messages
+
+Deux colonnes : la liste des demandes à gauche, le fil de conversation à droite. Les bulles distinguent **Vous** (le fournisseur) et **Client**. La saisie envoie avec **Entrée** (→ `POST /b2b/messages`) ; les messages sont marqués lus dès l'ouverture du fil.
+
+#### i) Catalogue
+
+**Consultatif uniquement** (l'ancien panier administrateur a été retiré). Recherche + filtre par catégorie. Grille de cartes-produit : nom, code, description, catégorie, prix/unité, stock (« X en stock » / « Rupture de stock »). Source `GET /b2b/catalogue`.
+
+#### j) Assistant IA — Gestion B2B
+
+Clavardage en **lecture seule** (aucune écriture, aucune proposition). Titre « Assistant IA — Gestion B2B ». Il utilise `api/b2bAi.ts`. Il **n'accède pas** aux comptes clients (mots de passe) ni au **contenu des messages**. Trois exemples d'amorce sont proposés.
 
 ---
 
-## 4. Reference
+## 3. Workflows pas à pas
 
-### 4.1 OPPORTUNITY_STATUSES (`crm.py:21`)
+### 3.1 Créer une opportunité
 
-```
-('PROSPECTION', 'QUALIFICATION', 'PROPOSITION', 'NEGOCIATION', 'GAGNE', 'PERDU')
-```
+1. Onglet **Pipeline** ou **Opportunités** → **Nouvelle opportunité** (ou **Ajouter** en pied d'une colonne pour fixer le statut).
+2. Saisir au minimum le **Nom** (obligatoire). Renseigner l'entreprise/contact, le montant estimé, la probabilité, la source et la priorité.
+3. **Enregistrer**. Le système crée l'opportunité `OPP-00001`, ainsi qu'un **dossier client** `DOS-OPP-…` (au mieux).
 
-| Valeur DB | Libelle UI | Couleur badge |
-|---|---|---|
-| PROSPECTION | Prospection | bleu |
-| QUALIFICATION | Qualification | jaune |
-| PROPOSITION | Proposition | violet |
-| NEGOCIATION | Negociation | orange |
-| GAGNE | Gagne | vert |
-| PERDU | Perdu | rouge |
+### 3.2 Faire avancer une affaire dans le pipeline
 
-### 4.2 INTERACTION_TYPES (`crm.py:22`)
+**Par glisser-déposer** : dans le Kanban, tirez la carte vers une autre colonne (nouveau statut) ou vers les cartes-résumé Gagné/Perdu. La carte se déplace tout de suite ; si l'enregistrement échoue, elle revient à sa place.
 
-```
-('APPEL', 'EMAIL', 'REUNION', 'VISITE', 'NOTE')
-```
+**Par bouton rapide** : sur la carte, cliquez « Avancer vers <statut> », « Gagné » ou « Perdu ».
 
-| Valeur DB | Libelle | Icone | Couleur |
-|---|---|---|---|
-| APPEL | Appel | Phone | bleu |
-| EMAIL | Email | Mail | sarcelle |
-| REUNION | Reunion | Users | violet |
-| VISITE | Visite | Eye | vert |
-| NOTE | Note | FileText | gris |
+Les transitions sont **libres** : n'importe quel statut peut mener à n'importe quel autre. Aucune règle n'oblige à qualifier avant d'avancer.
 
-### 4.3 ACTIVITY_TYPES (`crm.py:174`)
+### 3.3 Réordonner les affaires d'une colonne
 
-Meme tuple que INTERACTION_TYPES. Statut initial : `PLANIFIE`.
+Dans le Kanban, glissez une carte **au-dessus/en dessous** d'une autre **dans la même colonne**. Le nouvel ordre est enregistré (`PUT /crm/opportunities/reorder`) et sert de priorité d'affichage.
 
-NB : `VentesPage.tsx:900` envoie `typeActivite: 'TACHE'` pour les activites creees rapidement, valeur **non autorisee** -> HTTP 400 « Type invalide ». Bug connu.
+### 3.4 Qualifier une affaire
 
-### 4.4 PRIORITES opportunite
+**Automatique** : ouvrez l'onglet **Qualification**. Le score (Chaud/Tiède/Froid) et ses raisons se calculent seuls à partir des données déjà saisies.
 
-`BASSE` / `NORMAL` (defaut) / `HAUTE` / `URGENTE`. Pas de validation backend stricte.
+**Détaillée (B.A.T.)** : ouvrez le détail d'une opportunité, déroulez la **Grille de Pointage B.A.T.**, répondez aux 13 questions (4 sections), ajoutez des notes, **Enregistrer la qualification**. Le score B.A.T. et sa catégorie A+/A/B/C/D remontent ensuite sur la carte du Kanban.
 
-### 4.5 Champs Companies -- modele complet
+### 3.5 Journaliser une interaction ou une activité
 
-| Colonne BD | Type | Defaut | Notes |
-|---|---|---|---|
-| `nom` | TEXT | -- | Obligatoire |
-| `type_company` | TEXT | `Entrepreneur general` | 14 valeurs |
-| `secteur_activite` | TEXT | NULL | 17 valeurs |
-| `email`, `telephone` | TEXT | NULL | -- |
-| `adresse, ville` | TEXT | NULL | -- |
-| `province` | TEXT | `Quebec` | -- |
-| `code_postal` | TEXT | NULL | -- |
-| `pays` | TEXT | `Canada` | -- |
-| `site_web` | TEXT | NULL | -- |
-| `contact_principal_id` | INT | NULL | FK contacts |
-| `numero_tps`, `numero_tvq` | TEXT | NULL | -- |
-| `payment_terms` | TEXT | `Net 30` | -- |
-| `notes` | TEXT | NULL | -- |
-| `statut` | TEXT | `Actif` | `Inactif` apres soft-delete |
-| `created_at, updated_at` | TIMESTAMP | CURRENT_TIMESTAMP | -- |
+1. Ouvrez le détail de l'opportunité concernée.
+2. Dans le **fil**, cliquez **Interaction** (événement passé : appel, courriel...) ou **Activité** (tâche planifiée : relance, visite...).
+3. Choisissez le **Type**, la **Date**, saisissez le **Résumé/Sujet**, puis **Ajouter**.
 
-### 4.6 Champs Contacts -- modele complet
+Une **activité** est créée au statut PLANIFIE et alimente les **Relances** et le **Calendrier**.
 
-| Colonne BD | Type | Obligatoire | Notes |
-|---|---|---|---|
-| `company_id` | INT | Non | NULL si <= 0 |
-| `prenom` | TEXT | **Oui** | -- |
-| `nom_famille` | TEXT | **Oui** | -- |
-| `email, telephone, mobile` | TEXT | Non | -- |
-| `role_poste, fonction, departement` | TEXT | Non | -- |
-| `adresse, ville, province, code_postal` | TEXT | Non | DDL ajoute a la volee |
-| `est_principal` | BOOL | Non | Defaut `false` |
-| `notes` | TEXT | Non | -- |
-| `created_at` | TIMESTAMP | -- | CURRENT_TIMESTAMP |
+### 3.6 Traiter ses relances
 
-### 4.7 Endpoints API CRM
+1. Onglet **Relances** (le badge rouge indique le nombre en retard + aujourd'hui).
+2. Pour chaque carte : **Fait** (terminé), **Reporter** (choisir une nouvelle date), ou **Ouvrir** (aller à l'opportunité).
 
-#### Companies
-- `GET /companies?page=&per_page=&search=&type_filter=`
-- `GET /companies/{id}` -- detail + contacts
-- `POST /companies`
-- `PUT /companies/{id}`
-- `DELETE /companies/{id}` -- soft-delete
+### 3.7 Convertir une opportunité en soumission (devis)
 
-#### Contacts
-- `GET /contacts?page=&per_page=&search=&company_id=`
-- `POST /contacts`
-- `PUT /contacts/{id}`
-- `DELETE /contacts/{id}` -- suppression reelle
+1. Ouvrez le détail de l'opportunité (Pipeline ou Opportunités).
+2. Cliquez **Créer une soumission** (→ `POST /crm/opportunities/{id}/create-devis`).
+3. Vous êtes redirigé vers le devis créé (`/devis?open=<id>`), au statut **Brouillon**, type **Détaillée**.
 
-#### Opportunities
-- `GET /crm/opportunities?page=&per_page=&search=&statut=&company_id=`
-- `GET /crm/opportunities/{id}` -- detail + interactions + activities
-- `POST /crm/opportunities`
-- `PUT /crm/opportunities/{id}`
-- `PUT /crm/opportunities/reorder`
-- `DELETE /crm/opportunities/{id}`
-- `POST /crm/opportunities/{id}/create-devis`
-- `GET|POST|DELETE /crm/opportunities/{id}/assignations[/...]`
+Ce que fait le serveur (`create_devis_from_opportunity`, `crm.py:1232`) :
 
-#### Interactions / Activities
-- `GET /crm/interactions?company_id=&opportunity_id=&type_interaction=`
-- `POST /crm/interactions`
-- `GET /crm/activities`
-- `POST /crm/activities`
+- il **verrouille** l'opportunité (`FOR UPDATE`) : deux clics simultanés ne créent qu'un seul devis ; si un devis existe déjà, il répond **400 « déjà convertie en devis #X »** ;
+- il applique la cascade **Administration 3 % / Contingences 12 % / Profit 15 %** sur le montant estimé (le profit 15 % est **fixe**, cohérent avec le modèle cost-plus de l'ERP) ;
+- il calcule les **taxes selon la configuration du locataire** (`resolve_document_tax_config`) — au Québec, TPS 5 % et TVQ 9,975 %, mais un locataire configuré ailleurs aura ses propres taux ;
+- il numérote le devis **`DEV-{année}-{id:03d}`**, y sème une ligne d'estimation (quantité 1, unité « global ») si le montant est positif ;
+- il fait passer l'opportunité au statut **PROPOSITION** et la relie au devis, puis lie le dossier au devis.
 
-#### Pipeline / Stats / Calendrier / Timeline
-- `GET /crm/pipeline`
-- `GET /crm/stats`
-- `GET /crm/calendar?year=&month=`
-- `GET /crm/timeline?company_id=&limit=`
+> La conversion crée un **devis**, pas un projet. Le passage devis → projet se fait dans le module Soumissions/Projets à l'acceptation.
 
-#### BAT Qualification
-- `GET /crm/qualification` -- lead scoring auto
-- `GET /crm/qualification/bat/all`
-- `GET /crm/qualification/bat/{opportunity_id}`
-- `POST /crm/qualification/bat`
+### 3.8 Supprimer une opportunité
 
-### 4.8 Pagination
+1. Détail de l'opportunité → **Supprimer** → confirmez.
+2. Le serveur supprime en cascade les **interactions, activités, assignations, qualifications** ; il **détache** (met à NULL) le devis, le projet et les courriels liés (l'historique est préservé) ; il supprime le dossier auto-créé **seulement s'il est vide**.
 
-`page` (>=1, defaut 1), `per_page` (1-100, defaut 20). Reponse : `{ items, total, page, per_page }`.
+### 3.9 Utiliser l'assistant IA Ventes
 
-### 4.9 Numerotation automatique
+1. Onglet **Assistant IA**. Posez votre demande (ex. « Crée une opportunité pour la rénovation du 12 rue Principale, budget 80 000 $ »).
+2. L'IA lit vos données et, si pertinent, affiche une **carte de proposition**.
+3. Vérifiez les champs, puis **Confirmer** (création réelle) ou **Annuler**.
 
-| Entite | Format | Generateur |
-|---|---|---|
-| Opportunite | `OPP-00001` | `MAX(SUBSTRING numero_opportunite)+1` |
-| Dossier auto-cree | `DOS-OPP-00001` | Prefixe par numero opportunite |
-| Devis converti | `DEV-{annee}-{id:03d}` | Annee courante + ID devis |
+### 3.10 B2B — Approuver un accès au portail
+
+1. Un client s'inscrit sur le **portail externe** (`/b2b-portal`) ; son compte apparaît dans **B2B → Demandes d'accès → En attente**.
+2. **Approuver** : le compte devient actif et l'entreprise cliente est réactivée. (Ou **Rejeter** pour supprimer la demande.)
+3. Optionnel mais recommandé : dans **Clients**, **liez** le client à une **entreprise CRM** pour qu'il suive ses devis/projets dans le portail.
+
+### 3.11 B2B — De la demande au contrat
+
+1. **Demandes** → **Nouvelle demande** (client, titre, budget, chantier...).
+2. Dans le détail de la demande → **Créer soumission** (Montant HT, délai, validité...). La demande passe de NOUVELLE à EN_COURS.
+3. **Soumissions** → **Accepter** : la soumission passe à ACCEPTEE, les **autres soumissions** de la demande sont refusées, et un **contrat** actif `CTR-AAAAMM-0001` est généré.
+4. **Contrats** → **Modifier** pour suivre l'avancement (%) et les montants payés.
+
+### 3.12 B2B — Suivre et annuler une commande
+
+1. **Commandes** : ouvrez la commande (créée via le portail).
+2. **Avancer** au statut suivant (EN_ATTENTE → ... → LIVREE) au fur et à mesure.
+3. **Annuler** si nécessaire : le **stock réservé est réapprovisionné** et la commande devient ANNULEE (définitif).
 
 ---
 
-## 5. Integrations et FAQ
+## 4. Référence
 
-### 5.1 Companies <-> Contacts
+### 4.1 Endpoints CRM (`/api/erp/v1/crm`)
 
-- Un contact peut etre rattache a zero ou une entreprise (`company_id` nullable).
-- L entreprise pointe vers un `contact_principal_id` distinct.
-- Suppression entreprise : soft-delete (statut Inactif), contacts restent.
-- Suppression contact : suppression reelle, aucun controle sur les references orphelines.
+| Méthode | Chemin | Garde | Référence |
+|---------|--------|-------|-----------|
+| GET | `/crm/opportunities` | lecture | `crm.py:331` |
+| GET | `/crm/opportunities/{id}` | lecture | `crm.py:442` |
+| POST | `/crm/opportunities` | `require_crm_write` | `crm.py:526` |
+| PUT | `/crm/opportunities/reorder` | `require_crm_write` | `crm.py:719` |
+| PUT | `/crm/opportunities/{id}` | `require_crm_write` | `crm.py:787` |
+| DELETE | `/crm/opportunities/{id}` | `require_crm_write` | `crm.py:876` |
+| POST | `/crm/opportunities/{id}/create-devis` | `require_crm_write` | `crm.py:1232` |
+| GET | `/crm/opportunities/{id}/assignations` | lecture | `crm.py:2433` |
+| POST | `/crm/opportunities/{id}/assignations` | `require_crm_write` | `crm.py:2474` |
+| DELETE | `/crm/opportunities/{id}/assignations/{aid}` | `require_crm_write` | `crm.py:2534` |
+| GET | `/crm/interactions` | lecture | `crm.py:1037` |
+| POST | `/crm/interactions` | `require_crm_write` | `crm.py:1117` |
+| GET | `/crm/activities` | lecture | `crm.py:1525` |
+| POST | `/crm/activities` | `require_crm_write` | `crm.py:1582` |
+| PATCH | `/crm/activities/{id}` | `require_crm_write` | `crm.py:1644` |
+| GET | `/crm/pipeline` | lecture | `crm.py:1178` |
+| GET | `/crm/stats` | lecture | `crm.py:1416` |
+| GET | `/crm/relances` | lecture | `crm.py:1718` |
+| GET | `/crm/calendar` | lecture | `crm.py:1824` |
+| GET | `/crm/timeline` | lecture | `crm.py:1928` |
+| GET | `/crm/qualification` | lecture | `crm.py:2023` |
+| GET | `/crm/qualification/bat/all` | lecture | `crm.py:2213` |
+| GET | `/crm/qualification/bat/{id}` | lecture | `crm.py:2259` |
+| POST | `/crm/qualification/bat` | `require_crm_write` | `crm.py:2298` |
 
-### 5.2 CRM <-> Devis
+### 4.2 Endpoints Assistant IA Ventes (`/api/erp/v1/ventes/ai`)
 
-- L opportunite expose `devis_id` (NULL tant que non convertie).
-- Conversion via `POST /crm/opportunities/{id}/create-devis`:
-  - Cree un devis statut `Brouillon`, type `Detaillee`
-  - Applique marges 3 % / 12 % / 15 % puis taxes 5 % / 9.975 %
-  - Met a jour opportunite : `devis_id` rempli + `statut = PROPOSITION`
-  - Refuse une seconde conversion (HTTP 400)
-- Suppression opportunite : devis conserve, `opportunity_id` mis a NULL.
+| Méthode | Chemin | Effet | Référence |
+|---------|--------|-------|-----------|
+| POST | `/ventes/ai/chat` | Lit les données, propose (ne crée rien) | `ventes_ai.py:302` |
+| POST | `/ventes/ai/confirm-action` | Crée l'opportunité confirmée (revérifie `require_crm_write`) | `ventes_ai.py:442` |
 
-### 5.3 CRM <-> Projets
+### 4.3 Endpoints Back-office B2B (`/api/erp/v1/b2b`) — principaux
 
-- Le module CRM **ne cree pas** de projet directement.
-- Projet referencer une opportunite via `projects.opportunity_id`.
-- La promotion d un devis accepte en projet releve du module Devis.
+| Méthode | Chemin | Garde | Référence |
+|---------|--------|-------|-----------|
+| GET | `/b2b/stats` | lecture | `b2b.py:722` |
+| GET | `/b2b/clients` · `/b2b/clients/{id}` | lecture | `b2b.py:821` · `881` |
+| POST | `/b2b/clients` | admin | `b2b.py:922` |
+| PUT | `/b2b/clients/{id}` | admin | `b2b.py:965` |
+| DELETE | `/b2b/clients/{id}` | admin | `b2b.py:1027` |
+| POST | `/b2b/client-users` | admin | `b2b.py:1111` |
+| GET | `/b2b/client-users` | lecture | `b2b.py:1166` |
+| PUT | `/b2b/client-users/{id}/approve` | admin | `b2b.py:1213` |
+| PUT | `/b2b/client-users/{id}/reject` | admin | `b2b.py:1308` |
+| PUT | `/b2b/client-users/{id}/deactivate` | admin | `b2b.py:1370` |
+| GET | `/b2b/demandes` · `/b2b/demandes/{id}` | lecture | `b2b.py:1435` · `1504` |
+| POST | `/b2b/demandes` | admin | `b2b.py:1558` |
+| PUT | `/b2b/demandes/{id}` | admin | `b2b.py:1608` |
+| GET | `/b2b/soumissions` | lecture | `b2b.py:1670` |
+| POST | `/b2b/soumissions` | admin | `b2b.py:1731` |
+| PUT | `/b2b/soumissions/{id}` | admin | `b2b.py:1808` |
+| PUT | `/b2b/soumissions/{id}/accepter` | admin | `b2b.py:1866` |
+| PUT | `/b2b/soumissions/{id}/refuser` | admin | `b2b.py:1978` |
+| GET | `/b2b/contrats` · `/b2b/contrats/{id}` | lecture | `b2b.py:2028` · `2084` |
+| PUT | `/b2b/contrats/{id}` | admin | `b2b.py:2128` |
+| GET | `/b2b/commandes` · `/b2b/commandes/{id}` | lecture | `b2b.py:2190` · `2247` |
+| PUT | `/b2b/commandes/{id}/statut` | admin | `b2b.py:2290` |
+| GET | `/b2b/catalogue` | lecture | `b2b.py:2451` |
+| GET/POST/DELETE | `/b2b/favoris[/{produit_id}]` | lecture | `b2b.py:2544` · `2586` · `2635` |
+| GET | `/b2b/messages` | lecture | `b2b.py:2679` |
+| POST | `/b2b/messages` | lecture (get_current_user) | `b2b.py:2730` |
+| PUT | `/b2b/messages/read` | lecture | `b2b.py:2773` |
+| GET | `/b2b/notifications` | lecture | `b2b.py:2829` |
+| PUT | `/b2b/notifications/{id}/read` | lecture | `b2b.py:2877` |
+| GET | `/b2b/categories` | **PUBLIC (aucune auth)** | `b2b.py:3014` |
+| POST | `/b2b/ai/chat` | lecture (assistant B2B) | `b2b_ai.py:221` |
 
-### 5.4 CRM <-> Dossiers
+> `GET /b2b/categories` est le **seul endpoint non authentifié** du module : il renvoie un dictionnaire statique de ~140 catégories de construction du Québec, sans aucune donnée de locataire.
 
-- A la creation d une opportunite : dossier `CLIENT` auto-genere `DOS-OPP-XXXXX` (best-effort).
-- A la conversion en devis : dossier lie au devis via `dossier_devis`.
-- Bouton « Voir le dossier » dans modale detail si `dossierId` non nul.
+### 4.4 Statuts d'opportunité (`OPPORTUNITY_STATUSES`, `crm.py:51`)
 
-### 5.5 CRM <-> Calendrier
+| Valeur (base) | Libellé affiché | Couleur | Colonne Kanban ? |
+|---------------|-----------------|---------|------------------|
+| PROSPECTION | Prospection | Bleu | Colonne 1 |
+| QUALIFICATION | Qualification | Jaune | Colonne 2 |
+| PROPOSITION | Proposition | Violet | Colonne 3 |
+| NEGOCIATION | Négociation | Orange | Colonne 4 |
+| GAGNE | Gagné | Vert | Carte-résumé (cible de dépôt) |
+| PERDU | Perdu | Rouge | Carte-résumé (cible de dépôt) |
 
-`GET /crm/calendar?year=&month=` agrege 3 sources :
-1. Interactions (`date_interaction`) -> `resume`
-2. Activites (`date_activite`) -> `sujet`
-3. Opportunites a cloturer (`date_cloture_prevue`) -> `Cloture: {nom}`
+Les valeurs sont stockées en majuscules ASCII ; une migration idempotente (`_ensure_opportunities_statut_check`) resynchronise la contrainte des locataires plus anciens. Les libellés affichés proviennent de `crm.json` (namespace `ventes.statusLabels.*`).
 
-### 5.6 FAQ
+### 4.5 Types d'interaction / d'activité
 
-**Q1. Pourquoi ma transition de statut affiche un libelle sans accent ?**
-Constante backend `OPPORTUNITY_STATUSES` en ASCII pur. Choix volontaire pour eviter les soucis d encodage en BD legacy.
+| Constante (`crm.py`) | Valeurs |
+|----------------------|---------|
+| `INTERACTION_TYPES` (`:52`) | APPEL, EMAIL, REUNION, VISITE, NOTE |
+| `ACTIVITY_TYPES` (`:271`) | **TACHE**, APPEL, EMAIL, REUNION, VISITE, RELANCE, NOTE |
+| `ACTIVITY_STATUSES` (`:264`) | PLANIFIE, TERMINE, ANNULE |
 
-**Q2. Pourquoi la conversion cree un devis et pas directement un projet ?**
-Workflow : Opportunite -> Devis -> Acceptation -> Projet. Le passage devis -> projet se fait dans le module Devis lorsque le devis passe au statut Accepte.
+> `TACHE` est une valeur d'activité **valide** (`crm.py:271`). L'ancien manuel signalait un bogue « TACHE rejeté » : il est **corrigé**.
 
-**Q3. Que valent les marges 3 / 12 / 15 % ?**
-Verifie dans `crm.py:952-954` :
-```
-administration = montant * 0.03   (3 %)
-contingences   = montant * 0.12   (12 %)
-profit         = montant * 0.15   (15 %)
-```
-Codees en dur dans la fonction. Pour les modifier par tenant : editer les lignes du devis apres creation.
+### 4.6 Priorités d'opportunité
 
-**Q4. Les taxes sont-elles correctes pour le Quebec ?**
-Oui : TPS 5 %, TVQ 9.975 %. Calculees sur `total_avant_taxes` (montant + marges).
+Basse · Normale · Haute · Urgente (libellés `crm.json`). Défaut : Normale.
 
-**Q5. Y a-t-il des workflows automatiques (taches, emails, notifications) ?**
-**Non.** Aucun workflow automatique trouve dans `crm.py`. Effets de bord automatiques limites a :
-- A la creation d opportunite : numero genere + dossier client (best-effort)
-- A la conversion en devis : statut opportunite passe a `PROPOSITION`
+### 4.7 Barèmes de qualification
 
-**Q6. Difference entre interaction et activite CRM ?**
-- **Interaction** : evenement passe (appel recu, email envoye). Champs : `resume`, `details`, `date_interaction`, `suivi_prevu`.
-- **Activite** : evenement planifie ou a venir. Champs : `sujet`, `description`, `date_activite`, `duree_minutes`, `statut`.
+**Pointage automatique** (`GET /crm/qualification`, sur opportunités ouvertes) :
 
-**Q7. Suppression definitive d une entreprise ?**
-Pas via UI ni API (soft-delete uniquement). Exige intervention SQL directe.
-
-**Q8. Comment marquer un contact comme « principal » ?**
-Deux mecanismes :
-1. `companies.contact_principal_id` : pointeur entreprise -> contact (settable via formulaire).
-2. `contacts.est_principal` (booleen) : utilise pour ordonner. **Aucun toggle UI** ; il faut passer par `PUT /contacts/{id}` directement.
-
-**Q9. Ordre de tri par defaut des opportunites dans le pipeline ?**
-`ORDER BY COALESCE(sort_order, 999) ASC, updated_at DESC NULLS LAST`.
-
-**Q10. Que se passe-t-il si je change le `companyId` apres conversion ?**
-L opportunite est mise a jour, mais le devis conserve son `client_company_id` et `client_nom_cache` (snapshot a la conversion).
-
-**Q11. Filtres de la page Opportunites ?**
-- `search` : LIKE insensible a la casse sur `nom`, `notes`, `source`
-- `statut` : filtre exact sur l une des 6 valeurs
-- `company_id` : filtre par entreprise
-
-**Q12. Grille BAT obligatoire pour avancer une opportunite ?**
-Non. Aucune validation backend ne lie statut au score BAT. La grille est purement consultative.
-
-**Q13. Colonnes adresse de la table contacts toujours presentes ?**
-Le code utilise `_ensure_contact_address_cols` qui ajoute idempotemment `adresse, ville, province, code_postal` au premier acces du processus sur un schema.
-
-**Q14. Quelles colonnes Companies ne sont pas exposees dans le formulaire UI ?**
-`numero_tps`, `numero_tvq`, `payment_terms` definies dans le modele backend mais absentes du formulaire `CompaniesPage.tsx`. Pour les renseigner : `PUT /companies/{id}` direct via API.
-
-**Q15. Quels statuts sont consideres « fermes » dans les statistiques ?**
-`GAGNE` et `PERDU`. Taux de conversion = `gagnes / (gagnes + perdus)`.
-
-**Q16. Suppression d une opportunite avec assignations ?**
-Table `opportunity_assignations` supprimee en cascade. Aucune notification envoyee aux employes.
-
-**Q17. Scoring auto (HOT/WARM/COLD) vs grille BAT (A+/A/B/C/D) ?**
-- Scoring auto calcule a la volee a partir de signaux structurels.
-- Grille BAT saisie manuellement, plus precise (12 questions, 4 axes).
-Les deux peuvent diverger.
-
-**Q18. Protection contre double conversion en devis ?**
-Oui (`crm.py:939-940`) : si `opportunity.devis_id` non NULL, HTTP 400 « Opportunite deja convertie en devis #{id} ».
-
----
-
-## 6. Recap one-pager
-
-| Element | Detail |
+| Critère | Points |
 |---------|--------|
-| **Mission** | Cycle commercial complet : Companies, Contacts, Opportunites (kanban 6 statuts), Interactions, Activites, Qualification BAT, Lead scoring auto, Conversion devis. |
-| **Code source** | `backend/routers/crm.py` (2011 lignes, 22 endpoints) + `backend/routers/companies.py` (Companies + Contacts), `frontend/src/pages/{CompaniesPage,ContactsPage,VentesPage}.tsx` |
-| **Tables PostgreSQL** | `companies`, `contacts`, `opportunities`, `interactions`, `crm_activities`, `prospect_qualifications`, `opportunity_assignations`, `dossiers`, `dossier_factures` |
-| **Endpoints majeurs** | `/companies` (CRUD soft-delete), `/contacts` (CRUD hard-delete), `/crm/opportunities` (CRUD + reorder + create-devis + assignations), `/crm/interactions`, `/crm/activities`, `/crm/pipeline`, `/crm/stats`, `/crm/calendar`, `/crm/timeline`, `/crm/qualification[/bat]` |
-| **Statuts/types** | Opportunites 6 statuts (PROSPECTION / QUALIFICATION / PROPOSITION / NEGOCIATION / GAGNE / PERDU). Priorites 4 (BASSE / NORMAL / HAUTE / URGENTE). 14 types entreprise, 17 secteurs activite. 5 types interaction (APPEL / EMAIL / REUNION / VISITE / NOTE). |
-| **Permissions** | Tous utilisateurs authentifies du tenant. Aucune RBAC supplementaire, aucun role « commercial / vendeur » dedie. Pas de filtre par owner. |
-| **Integrations** | Devis (conversion `POST /crm/opportunities/{id}/create-devis` avec marges 3/12/15 % + taxes 5/9.975 %), Dossiers (auto `DOS-OPP-XXXXX`), Calendrier (`/crm/calendar`), Projets (FK lecture seule `projects.opportunity_id`), Emails (FK), Quickbooks/CCQ/CNESST via Devis |
-| **Pas implemente** | Aucun workflow auto declenche par changement de statut. Aucun envoi auto d email. Aucune creation auto de projet (passe par Devis). Aucun calcul de commission. Pas de soft-delete sur Contact (DELETE = hard delete). Pas de toggle UI pour `est_principal`. Pas de validation backend BAT obligatoire pour avancer statut. Bug connu : `typeActivite='TACHE'` envoye par UI (rejet 400). Champs `numero_tps`, `numero_tvq`, `payment_terms` absents du formulaire UI. |
+| `montant_estime > 0` | +20 |
+| Entreprise renseignée | +15 |
+| Contact renseigné | +10 |
+| Probabilité > 50 | +20 |
+| Au moins 1 interaction | +15 |
+| Source renseignée | +10 |
+| Mise à jour < 30 jours | +10 |
+
+Catégories : **HOT** ≥ 70 · **WARM** ≥ 40 · **COLD** en dessous.
+
+**Grille B.A.T. manuelle** (le serveur recalcule le total et la catégorie) :
+
+| Score total | Catégorie | Couleur | Action recommandée |
+|-------------|-----------|---------|--------------------|
+| ≥ 90 | A+ | Vert | Priorité maximale — visite 48-72 h |
+| 75-89 | A | Vert | Priorité haute |
+| 50-74 | B | Jaune | Potentiel — à approfondir |
+| 25-49 | C | Orange | Tiède — maintenir le contact |
+| < 25 | D | Gris | Froid — pas prioritaire |
+
+> Deux systèmes **distincts** : le pointage automatique (3 niveaux HOT/WARM/COLD) et la grille B.A.T. (5 catégories A+/A/B/C/D). Ils peuvent diverger.
+
+### 4.8 Conversion en devis — cascade et taxes
+
+| Élément | Valeur |
+|---------|--------|
+| Administration | montant × 3 % |
+| Contingences | montant × 12 % |
+| Profit | montant × 15 % (**fixe**, modèle cost-plus) |
+| Taxes | Selon la configuration du locataire (`resolve_document_tax_config`) — QC : TPS 5 %, TVQ 9,975 % |
+| Montant borné | `max(0, min(montant, 1 000 000 000))` |
+| Devis créé | statut Brouillon, type Détaillée, numéro `DEV-{année}-{id:03d}`, 1 ligne d'estimation initiale |
+| Effet sur l'opportunité | passe à PROPOSITION + lien vers le devis |
+| Protection | `FOR UPDATE` + revérification → 400 si déjà convertie |
+
+### 4.9 Numérotation automatique
+
+| Entité | Format | Exemple |
+|--------|--------|---------|
+| Opportunité | `OPP-{id:05d}` | OPP-00042 |
+| Dossier auto-créé | `DOS-OPP-…` | DOS-OPP-00042 |
+| Devis converti | `DEV-{année}-{id:03d}` | DEV-2026-137 |
+| Contrat B2B | `CTR-{AAAAMM}-{id:04d}` | CTR-202607-0009 |
+
+Tous les numéros sont générés par INSERT-RETURNING-id (jamais par COUNT+1), garantissant l'unicité même en cas de clics simultanés.
+
+### 4.10 Statuts B2B
+
+| Constante (`b2b.py`) | Valeurs |
+|----------------------|---------|
+| `DEMANDE_STATUTS` (`:31`) | NOUVELLE, EN_COURS, SOUMISE, ACCEPTEE, REFUSEE, ANNULEE |
+| `SOUMISSION_STATUTS` (`:34`) | BROUILLON, SOUMISE, EN_EVALUATION, ACCEPTEE, REFUSEE, EXPIREE |
+| `CONTRAT_STATUTS` (`:32`) | BROUILLON, ACTIF, EN_COURS, TERMINE, ANNULE, SUSPENDU |
+| `COMMANDE_STATUTS` (`:33`) | EN_ATTENTE, CONFIRMEE, EN_PREPARATION, EXPEDIEE, LIVREE, ANNULEE |
+
+> La table `b2b_commandes` est **partagée** avec l'ancienne application Streamlit (statuts en minuscules). Le module gère la casse de façon transparente (`upper(...)` et réparation de la contrainte CHECK). Toute évolution des statuts doit rester compatible avec les deux applications.
+
+### 4.11 Taxes B2B
+
+TPS 5 % (`TPS_RATE = 0.05`) et TVQ 9,975 % (`TVQ_RATE = 0.09975`), en dur dans `b2b.py:28-29`. Pour une soumission : si le **Montant HT** est fourni, TPS et TVQ s'ajoutent dessus ; sinon le HT est déduit du TTC. Date d'expiration = date du jour + validité (défaut 30 jours).
+
+### 4.12 Limites, bornes et défenses
+
+| Élément | Valeur |
+|---------|--------|
+| Pagination opportunités | `page` ≥ 1, `per_page` 1-200 (20 par défaut à l'écran) |
+| Recherche | LIKE avec échappement `% _ \`, tronquée à 100 caractères |
+| Montant estimé | 0 à 1 000 000 000 |
+| Probabilité | 0 à 100 |
+| Réordonnancement | jusqu'à 10 000 identifiants par appel |
+| Grille B.A.T. | axes 0-25, total 0-100, notes ≤ 10 000 caractères |
+| Relances | horizon 0-90 jours (7 par défaut) |
+| Calendrier | année 1900-2200, mois 1-12 |
+| Historique (timeline) | limite ≤ 200 |
+| Assignation | UNIQUE (opportunité, employé) → 409 si doublon |
+
+### 4.13 Assistant IA — modèle, coût, limites de débit
+
+| Élément | Ventes | B2B |
+|---------|--------|-----|
+| Modèle | `claude-sonnet-4-6` | `claude-sonnet-4-6` |
+| Écriture | Oui, opportunité **sur confirmation** | **Non** (lecture seule) |
+| Outils de lecture | `recherche_bd` — tables `{opportunities, companies, contacts}` | tables B2B (hors comptes/messages) + `projects`, `companies` |
+| Coût | (entrée × 0,003 + sortie × 0,015) / 1000 × **1,30** (marge 30 %) | idem |
+| Débité de | `public.ai_prepaid_credits` (recharge auto Stripe 10 $ sous le seuil) | idem |
+| Limite de débit (par IP) | clavardage 20/min, confirmation 30/min | clavardage 20/min |
+
+Le vrai contrôle de crédit est `_check_credits` (fail-closed : bloque en cas d'erreur). Note technique : le clavardage Ventes débite **sans clé d'idempotence** — un retour réseau/réessai peut redébiter (mineur, il s'agit d'un clavardage, pas d'une mutation d'argent).
+
+### 4.14 Raccourcis
+
+| Action | Geste |
+|--------|-------|
+| Ouvrir le détail d'une carte | Double-clic (ou bouton œil) |
+| Changer de statut | Glisser la carte vers une autre colonne / carte-résumé |
+| Réordonner | Glisser la carte dans la même colonne |
+| Envoyer un message au clavardage | Entrée |
+| Ouvrir le B2B en direct | `/ventes?tab=b2b` (admin) |
+| Ouvrir une opportunité en direct | `/ventes?open=<id>` |
 
 ---
 
-*Manuel ERP Constructo — Module CRM — v2.0 verifie — 2026-04-25*
+## 5. Intégrations et FAQ
+
+### 5.1 Liens avec les autres modules
+
+| Module | Lien |
+|--------|------|
+| **04 — Entreprises** | Les opportunités et clients B2B se rattachent à une entreprise. La création/gestion des entreprises vit dans son propre module. |
+| **05 — Contacts** | Le champ « Client (Personne) » d'une opportunité pointe vers un contact. Gestion des contacts : module 05. |
+| **07 — Dossiers** | Chaque opportunité génère un dossier `DOS-OPP-…` ; la conversion lie le dossier au devis. |
+| **08 — Soumissions (devis)** | « Créer une soumission » produit un devis brouillon `DEV-…` et redirige vers son éditeur. |
+| **09 — Projets** | Un projet peut référencer l'opportunité (`projects.opportunity_id`). La promotion devis → projet se fait côté Soumissions/Projets. |
+| **10 — Magasin / inventaire** | Le catalogue B2B lit les `produits` ; annuler une commande B2B **restitue le stock**. |
+| **Portail B2B externe** (`/b2b-portal`) | Les clients s'y inscrivent, envoient des demandes et **passent les commandes**. Le back-office B2B de ce module en est la contrepartie interne. |
+| **25 — Assistant IA** | Les assistants Ventes et B2B partagent le même moteur de crédits IA (`ai_prepaid_credits`) et la facturation Stripe. |
+| **28 — Configuration** | La configuration de taxes du locataire pilote les taxes de la conversion en devis. L'état de l'abonnement Stripe pilote le mode consultation. |
+
+### 5.2 FAQ
+
+**Q1. Pourquoi je ne vois pas l'onglet B2B/B2C ?**
+Il est réservé aux administrateurs (rôle `admin`, `is_admin`, ou super-administrateur). Un compte au rôle `user` a accès à tout le CRM mais pas au back-office B2B.
+
+**Q2. Un employé peut-il travailler dans le pipeline ?**
+Oui si son rôle est `user`, `gestionnaire`, `contremaitre`, `admin` ou super-administrateur. Les rôles `employee` et `comptable` sont en **lecture seule** côté CRM (toute écriture renvoie 403).
+
+**Q3. Pourquoi le pipeline n'a-t-il que 4 colonnes alors qu'il y a 6 statuts ?**
+Gagné et Perdu ne sont pas des colonnes, mais deux **cartes-résumé** en haut (montant + nombre), qui servent aussi de cibles de dépôt. Les 4 colonnes couvrent le travail « en cours ».
+
+**Q4. La conversion crée-t-elle un projet ?**
+Non : elle crée un **devis** au statut Brouillon. Le processus est Opportunité → Devis → Acceptation → Projet ; la dernière étape relève du module Soumissions/Projets.
+
+**Q5. Les marges 3 / 12 / 15 % sont-elles configurables ?**
+Le **profit 15 % est fixe** (modèle cost-plus de l'ERP), tout comme Administration 3 % et Contingences 12 %. Pour ajuster un cas particulier, modifiez le devis après sa création (module Soumissions).
+
+**Q6. Les taxes de la conversion sont-elles toujours 5 % / 9,975 % ?**
+Elles suivent la **configuration du locataire** (`resolve_document_tax_config`). Au Québec, ce sont bien TPS 5 % et TVQ 9,975 %, mais un locataire configuré ailleurs (ex. autre province, États-Unis) aura ses propres taux. C'est une amélioration par rapport à l'ancien taux QC en dur.
+
+**Q7. Puis-je exporter le pipeline en PDF ou CSV ?**
+Non. Le module Ventes/B2B ne propose **aucun export, aucune impression, aucun téléversement**. Les documents se produisent depuis Soumissions/Dossiers.
+
+**Q8. Peut-on assigner un employé à une opportunité ?**
+Pas depuis l'interface : les fonctions existent côté API (`crm.ts:353-365`, endpoints `crm.py:2433/2474/2534`) mais **ne sont branchées à aucun écran** du module. Il n'y a donc pas d'interface d'assignation.
+
+**Q9. L'assistant IA peut-il modifier ou supprimer des données ?**
+Non. L'assistant **Ventes** ne peut que **proposer une opportunité**, créée seulement après votre confirmation (et il revérifie vos droits d'écriture côté serveur). L'assistant **B2B** est en **lecture seule** et n'accède ni aux comptes clients ni au contenu des messages.
+
+**Q10. Que se passe-t-il si je double-clique sur « Créer une soumission » ?**
+Rien de dangereux : l'opportunité est verrouillée (`FOR UPDATE`) le temps de la conversion, donc un seul devis est créé. Le second clic reçoit « déjà convertie en devis #X ».
+
+**Q11. Différence entre une interaction et une activité ?**
+Une **interaction** est un événement **passé** (appel reçu, courriel envoyé). Une **activité** est une **tâche planifiée** (relance, visite, tâche), avec un statut PLANIFIE/TERMINE/ANNULE ; ce sont les activités qui alimentent les Relances et le Calendrier.
+
+**Q12. La grille B.A.T. est-elle obligatoire pour avancer une affaire ?**
+Non. Aucune règle ne lie le statut au score. La qualification est un outil d'aide à la décision, pas un verrou.
+
+**Q13. Pourquoi le score B.A.T. que j'ai calculé diffère parfois de celui affiché ?**
+Le **serveur recalcule** toujours le total et la catégorie à partir de vos réponses ; c'est cette valeur qui fait foi.
+
+**Q14. Comment un client obtient-il un accès au portail ?**
+Il s'inscrit sur le portail externe ; sa demande apparaît dans **B2B → Demandes d'accès → En attente**. Un administrateur l'**approuve** (ce qui active le compte et l'entreprise) ou le **rejette**.
+
+**Q15. Pourquoi lier un client B2B à une entreprise CRM ?**
+Le lien permet au client de **suivre ses devis et projets** dans le portail. Il est **toujours posé manuellement** par un administrateur — jamais automatiquement par courriel, pour éviter toute usurpation.
+
+**Q16. Pourquoi le catalogue B2B ne permet-il pas de commander ?**
+Le panier administrateur a été **retiré** ; le catalogue est désormais consultatif. Les commandes se créent côté client, dans le portail externe. L'administrateur les **suit** et les **fait avancer** (ou annule) depuis le sous-onglet Commandes.
+
+**Q17. Qu'arrive-t-il au stock quand j'annule une commande B2B ?**
+Le stock réservé est **réapprovisionné** (mouvement d'entrée, motif ANNULATION), et la commande passe à ANNULEE, qui est un statut **terminal**.
+
+**Q18. Mon compte est en « Mode consultation » — pourquoi ?**
+L'abonnement Stripe du locataire n'est pas à jour. En readonly, vous pouvez tout consulter mais aucune écriture n'est acceptée. Régularisez l'abonnement (module Configuration) pour revenir en écriture.
+
+**Q19. L'assistant IA me facture-t-il ?**
+Chaque échange consomme des crédits IA prépayés (coût réel du modèle + marge 30 %), débités de `ai_prepaid_credits`. Une recharge Stripe automatique de 10 $ se déclenche sous le seuil. Les super-administrateurs et les comptes exemptés ne sont pas débités.
+
+**Q20. Où sont gérés les entreprises et les contacts ?**
+Dans leurs modules dédiés : **04 — Entreprises** et **05 — Contacts**. Ce module ne fait que les **référencer** dans les menus déroulants des opportunités et clients B2B.
+
+---
+
+## 6. Récapitulatif
+
+- **Un écran, deux périmètres** : le CRM (pipeline, relances, calendrier, historique, qualification, assistant IA) pour tous, et le **back-office B2B** (10 sous-onglets) réservé aux administrateurs.
+- **8 onglets** : Pipeline · Relances · Opportunités · Calendrier · Historique · Qualification · Assistant IA · B2B/B2C.
+- **6 statuts d'opportunité**, mais **4 colonnes** Kanban glissables ; Gagné/Perdu sont des cartes-résumé et cibles de dépôt.
+- **Trois niveaux de permission** : lecture (tout compte ERP), écriture CRM (`require_crm_write`, inclut le rôle `user`), écriture B2B (`require_tenant_admin_or_role`, administrateurs seulement). Le **mode consultation** Stripe peut mettre tout le module en lecture seule.
+- **Deux qualifications** : pointage automatique (HOT/WARM/COLD) et grille B.A.T. manuelle (A+/A/B/C/D, recalculée côté serveur).
+- **Conversion en devis** en un clic : cascade 3 % / 12 % / **profit 15 % fixe** + taxes **selon la configuration du locataire**, devis `DEV-{année}-{id:03d}` brouillon, opportunité → PROPOSITION, verrouillage anti double-conversion.
+- **Numérotation** : `OPP-{id:05d}`, `DOS-OPP-…`, `DEV-{année}-{id:03d}`, `CTR-{AAAAMM}-{id:04d}`.
+- **Deux assistants IA** : Ventes (propose une opportunité sur confirmation) et B2B (lecture seule). Modèle `claude-sonnet-4-6`, crédits prépayés + marge 30 %.
+- **B2B** : approbation des accès portail, demande → soumission → contrat (le contrat est créé à l'acceptation), suivi des commandes (annulation = restitution du stock), messagerie, catalogue consultatif.
+- **Ce que le module ne fait pas** : aucun export/impression/téléversement, aucune création de projet, aucun courriel automatique, aucun calcul de commission, aucune assignation d'employé (surface API morte), aucune création de commande côté administrateur.
+- **Endpoint public unique** : `GET /b2b/categories` (dictionnaire statique de catégories, aucune donnée de locataire).
+
+---
+
+*Sources vérifiées (2026-07)* : `backend/routers/crm.py` (2563 lignes) · `backend/routers/ventes_ai.py` (479 lignes) · `backend/routers/b2b.py` (3017 lignes) · `backend/routers/b2b_ai.py` (340 lignes) · `frontend/src/pages/VentesPage.tsx` (2914 lignes) · `frontend/src/pages/B2bPage.tsx` (1411 lignes) · `frontend/src/components/crm/BATQualificationForm.tsx` · `frontend/src/components/ventes/VentesAssistantTab.tsx` · `frontend/src/components/b2b/B2bAssistantTab.tsx` · `frontend/src/api/{crm.ts, ventesAi.ts, b2b.ts, b2bAi.ts}` · i18n `crm.json` (namespace `ventes.*`), `b2b.json`, `b2bAssistant.json`.
+
+*Manuels liés* : 04 — Entreprises · 05 — Contacts · 07 — Dossiers · 08 — Soumissions · 09 — Projets · 10 — Magasin · 25 — Assistant IA · 28 — Configuration.
+
+*Manuel ERP Constructo AI — Module 06 Ventes (CRM, opportunités, pipeline, B2B back-office) — v3.0 vérifié — 2026-07*
