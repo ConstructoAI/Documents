@@ -128,7 +128,7 @@ Every statement is traceable to the code (`ERP_REACT/backend/routers/*.py`, `fro
 ### 3. Help
 
 - Each module has its manual in this folder (English) and in the parent folder (French).
-- Support: **info@constructoai.ca** | **1 (936) 587-1141**.
+- Support: **info@constructoai.ca** | **1 (514) 820-1972**.
 
 ---
 
@@ -148,7 +148,7 @@ Every statement is traceable to the code (`ERP_REACT/backend/routers/*.py`, `fro
 
 - **AI Assistant**: available inside the application.
 - **Email**: info@constructoai.ca
-- **Phone**: 1 (936) 587-1141
+- **Phone**: 1 (514) 820-1972
 
 ---
 

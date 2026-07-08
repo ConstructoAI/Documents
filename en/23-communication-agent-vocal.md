@@ -500,7 +500,7 @@ No. The cards live in your company's `voice_knowledge_base` table, in the ERP da
 **Is "Clara" a single agent shared across all companies?**
 No. **Clara is the default name**, personalized in the name of **each company** (the greeting and the script say "the virtual assistant for [your company]"). Each company has its own configuration and its own Vapi assistant. There is no separate "clone" object: one company = one configuration row + its routed assistant.
 
-**Is the demo number (for example +1 936 587-1141) hard-coded?**
+**Is the demo number (for example +1 514 820-1972) hard-coded?**
 No. The number → company routing is **data-driven** (table `voice_phone_routing`). A "demo number" is simply a row in this table, not an application constant.
 
 **What happens if Vapi replays the same end-of-call report twice?**

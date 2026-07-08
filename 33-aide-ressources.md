@@ -91,14 +91,14 @@ Source : `Sidebar.tsx:259-262`. Chaque entrée est une balise `<a href>` (donc u
 |---|---|---|---|---|---|---|
 | 1 | **Vidéos** | `nav.helpResources.videos` | `https://www.youtube.com/channel/UC3EGXYQNj5UYGiyNfiiom_A` | Externe (nouvel onglet) | `Video` (18) | Glyphe « lien externe » (`ExternalLink`, 10, atténué) |
 | 2 | **Manuel** | `nav.helpResources.manuel` | `https://github.com/ConstructoAI/Documents/blob/main/README.md` | Externe (nouvel onglet) | `BookOpen` (18) | Glyphe « lien externe » |
-| 3 | **Téléphone** | `nav.helpResources.telephone` | `tel:+19365871141` | **Non externe** (composeur) | `Phone` (18) | **Texte** `1 936 587-1141` |
+| 3 | **Téléphone** | `nav.helpResources.telephone` | `tel:+15148201972` | **Non externe** (composeur) | `Phone` (18) | **Texte** `1 514 820-1972` |
 | 4 | **Liens utiles** | `nav.helpResources.usefulLinks` | `https://github.com/ConstructoAI/Documents/blob/main/liens-utiles.md` | Externe (nouvel onglet) | `ExternalLink` (18) | Glyphe « lien externe » |
 
 Règles de rendu (`Sidebar.tsx:263-295`) :
 
 - **Libellé** : provient de la traduction, `t(link.labelKey)` (`Sidebar.tsx:264`) — il n'est plus codé en dur dans le composant.
 - **Nouvel onglet** : seulement pour les liens externes. `target="_blank"` et `rel="noopener noreferrer"` sont posés **uniquement** si `external` est vrai (`Sidebar.tsx:269-270`). Le lien Téléphone (`external:false`) n'ouvre donc **aucun** onglet.
-- **Élément de fin** (`Sidebar.tsx:288-292`) : si le lien est externe, un petit glyphe « lien externe » atténué s'affiche à droite ; sinon, s'il possède un texte de fin (`trailingText`), ce texte s'affiche (cas du Téléphone, qui montre le numéro `1 936 587-1141`) ; sinon, rien.
+- **Élément de fin** (`Sidebar.tsx:288-292`) : si le lien est externe, un petit glyphe « lien externe » atténué s'affiche à droite ; sinon, s'il possède un texte de fin (`trailingText`), ce texte s'affiche (cas du Téléphone, qui montre le numéro `1 514 820-1972`) ; sinon, rien.
 - Aucun de ces liens ne passe par le filtre de rôle : ils sont rendus **inconditionnellement** pour tout utilisateur connecté.
 
 #### 2.2.1 Vidéos
@@ -113,7 +113,7 @@ Pointe vers le **README.md** du dépôt public `ConstructoAI/Documents` — l'**
 
 #### 2.2.3 Téléphone
 
-Lien `tel:+19365871141`. C'est le **seul lien non externe** de la section (`external:false`, `Sidebar.tsx:261`) : il n'ouvre pas d'onglet ; il demande au système d'exploitation de composer le numéro (utile surtout sur mobile ou avec un logiciel de téléphonie sur ordinateur). Le numéro s'affiche en texte à droite du libellé : **1 936 587-1141**.
+Lien `tel:+15148201972`. C'est le **seul lien non externe** de la section (`external:false`, `Sidebar.tsx:261`) : il n'ouvre pas d'onglet ; il demande au système d'exploitation de composer le numéro (utile surtout sur mobile ou avec un logiciel de téléphonie sur ordinateur). Le numéro s'affiche en texte à droite du libellé : **1 514 820-1972**.
 
 #### 2.2.4 Liens utiles
 
@@ -144,7 +144,7 @@ Au bas du tiroir mobile — et **nulle part sur bureau** — on trouve un pied q
 
 - **Version** : « Constructo AI ERP AI v1.0 » (`Sidebar.tsx:383`).
 - **Courriel** : `mailto:info@constructoai.ca`, affiché **info@constructoai.ca** (`Sidebar.tsx:385`). C'est le **seul endroit de la barre latérale** qui expose l'adresse de courriel en lien cliquable.
-- **Téléphone** : `tel:+19365871141`, affiché **1 (936) 587-1141** (`Sidebar.tsx:387`).
+- **Téléphone** : `tel:+15148201972`, affiché **1 (514) 820-1972** (`Sidebar.tsx:387`).
 
 > **À noter** : sur **bureau**, le pied de la barre latérale (`Sidebar.tsx:344-353`) ne contient **que** le bouton pour replier / déplier la barre — ni courriel, ni version. Le seul contact présent dans la barre latérale de bureau est donc le lien **Téléphone** de la section Aide.
 
@@ -182,7 +182,7 @@ Ces procédures découlent directement du comportement décrit à la section 2. 
 
 ### 3.3 Appeler le support
 
-1. Section « AIDE & RESSOURCES » → **Téléphone** (numéro affiché : 1 936 587-1141).
+1. Section « AIDE & RESSOURCES » → **Téléphone** (numéro affiché : 1 514 820-1972).
 2. Sur un appareil doté de téléphonie (mobile, ou logiciel d'appel sur ordinateur), le composeur s'ouvre avec le numéro pré-rempli. Aucun nouvel onglet ne s'ouvre.
 3. Sur un poste sans application de téléphonie, le clic peut ne rien déclencher : composer alors le numéro manuellement.
 
@@ -209,7 +209,7 @@ Le courriel n'est **pas** l'un des 4 liens de la section ; il se trouve ailleurs
 ### 3.7 Retrouver l'aide quand la barre est en mode icônes
 
 1. Si la barre latérale est réduite (icônes seulement), l'en-tête « AIDE & RESSOURCES » est masqué, mais les 4 icônes restent visibles.
-2. Survoler une icône pour afficher son infobulle (par exemple « Téléphone 1 936 587-1141 »).
+2. Survoler une icône pour afficher son infobulle (par exemple « Téléphone 1 514 820-1972 »).
 3. Cliquer l'icône voulue — le comportement (nouvel onglet ou composeur) est identique au mode déployé.
 
 ### 3.8 Obtenir de l'aide assistée dans l'ERP (Assistant IA)
@@ -227,7 +227,7 @@ Le courriel n'est **pas** l'un des 4 liens de la section ; il se trouve ailleurs
 | Apprendre à se servir d'un module | **Vidéos** ou **Manuel** |
 | Trouver une référence officielle (RBQ, CCQ, CNESST, taxes) | **Liens utiles** |
 | Question rapide sur mes données dans l'ERP | **Assistant IA** (barre supérieure) |
-| Problème technique, bogue, facturation, intégration | **Courriel** info@constructoai.ca ou **Téléphone** 1 936 587-1141 |
+| Problème technique, bogue, facturation, intégration | **Courriel** info@constructoai.ca ou **Téléphone** 1 514 820-1972 |
 | Découverte / questions avant de s'abonner | Chatbot public « Sylvain » sur la page de connexion (voir 5.2) |
 
 ---
@@ -257,7 +257,7 @@ Source : `Sidebar.tsx:259-262`.
 |---|---|---|---|---|---|---|
 | 1 | Vidéos / Videos | `nav.helpResources.videos` | `https://www.youtube.com/channel/UC3EGXYQNj5UYGiyNfiiom_A` | `true` | `Video` (18) | glyphe externe |
 | 2 | Manuel / Manual | `nav.helpResources.manuel` | `https://github.com/ConstructoAI/Documents/blob/main/README.md` | `true` | `BookOpen` (18) | glyphe externe |
-| 3 | Téléphone / Phone | `nav.helpResources.telephone` | `tel:+19365871141` | `false` | `Phone` (18) | texte `1 936 587-1141` |
+| 3 | Téléphone / Phone | `nav.helpResources.telephone` | `tel:+15148201972` | `false` | `Phone` (18) | texte `1 514 820-1972` |
 | 4 | Liens utiles / Useful links | `nav.helpResources.usefulLinks` | `https://github.com/ConstructoAI/Documents/blob/main/liens-utiles.md` | `true` | `ExternalLink` (18) | glyphe externe |
 
 ### 4.3 Traductions (i18n)
@@ -288,19 +288,19 @@ Source : `fr/nav.json:41-47` et `en/nav.json:41-47`. Parité FR/EN complète (le
 | Vidéos (YouTube) | Chaîne officielle | Lien 1 de la section | Non (externe) |
 | Manuel (GitHub) | `ConstructoAI/Documents` README | Lien 2 de la section | Non (GitHub public) |
 | Liens utiles (GitHub) | `ConstructoAI/Documents` liens-utiles.md | Lien 4 de la section | Non |
-| Téléphone | **1 936 587-1141** (`tel:+19365871141`) | Lien 3 de la section + pied mobile | Non (composeur du système) |
+| Téléphone | **1 514 820-1972** (`tel:+15148201972`) | Lien 3 de la section + pied mobile | Non (composeur du système) |
 | Courriel | **info@constructoai.ca** | Pied mobile + pages de connexion/inscription | Non (application de courriel) |
 | Assistant IA (in-app) | `/assistant-ia` | Bouton étincelles de la barre supérieure | Oui — **module distinct** (`routers/ai.py`) |
 | Chatbot « Sylvain » (avant connexion) | Page de connexion publique | `app.constructoai.ca` | Oui — **module distinct** (`routers/voice.py`) |
 
-> **Format du numéro** : même numéro partout (`+19365871141`), mais présentation différente — le lien de la section montre `1 936 587-1141` (`Sidebar.tsx:261`), tandis que le pied mobile et le chatbot public affichent `1 (936) 587-1141` (`Sidebar.tsx:387`). Simple différence de présentation.
+> **Format du numéro** : même numéro partout (`+15148201972`), mais présentation différente — le lien de la section montre `1 514 820-1972` (`Sidebar.tsx:261`), tandis que le pied mobile et le chatbot public affichent `1 (514) 820-1972` (`Sidebar.tsx:387`). Simple différence de présentation.
 
 ### 4.6 Configurabilité
 
 | Réglage | Valeur | Modifiable par l'utilisateur ? |
 |---|---|---|
 | URL des 4 liens | Codées en dur (`Sidebar.tsx:259-262`) | Non |
-| Numéro de téléphone | `+19365871141` (codé en dur) | Non |
+| Numéro de téléphone | `+15148201972` (codé en dur) | Non |
 | Adresse de courriel | `info@constructoai.ca` (codée en dur) | Non |
 | Libellés | Traductions `nav.helpResources.*` | Non (nécessite une mise à jour des fichiers de langue) |
 | Ordre / nombre de liens | 4, fixes | Non |
@@ -338,7 +338,7 @@ L'Assistant IA est la seule aide **assistée à l'intérieur** de l'ERP, mais il
 
 ### 5.2 Lien avec le chatbot public « Sylvain »
 
-Avant l'ouverture de session, la page de connexion publique (`app.constructoai.ca`) offre un assistant conversationnel — « Sylvain » (invite système `backend/sylvain_prompt.py`, serveur `routers/voice.py`, préfixes `/voice` et `/api/voice`). Son rôle est d'orienter les visiteurs et de **rediriger les questions techniques ou d'intégration** vers le courriel **info@constructoai.ca** ou le téléphone **1 (936) 587-1141**, et vers les **vidéos** YouTube pour la découverte. Il **normalise** l'affichage du numéro (`+1 936-587-1141` → `19365871141`, `voice.py:356`). Ce chatbot est **distinct** de la section Aide et ressources et n'est pas accessible depuis le shell connecté.
+Avant l'ouverture de session, la page de connexion publique (`app.constructoai.ca`) offre un assistant conversationnel — « Sylvain » (invite système `backend/sylvain_prompt.py`, serveur `routers/voice.py`, préfixes `/voice` et `/api/voice`). Son rôle est d'orienter les visiteurs et de **rediriger les questions techniques ou d'intégration** vers le courriel **info@constructoai.ca** ou le téléphone **1 (514) 820-1972**, et vers les **vidéos** YouTube pour la découverte. Il **normalise** l'affichage du numéro (`+1 514-820-1972` → `15148201972`, `voice.py:356`). Ce chatbot est **distinct** de la section Aide et ressources et n'est pas accessible depuis le shell connecté.
 
 ### 5.3 Le dépôt GitHub `ConstructoAI/Documents`
 
@@ -373,13 +373,13 @@ En ligne. Le lien « Manuel » ouvre le README du dépôt GitHub `ConstructoAI/D
 Oui. Le lien pointe vers le **README** (l'index de la documentation), pas vers un module précis. À partir de cet index, on ouvre le manuel détaillé du module voulu.
 
 **Comment joindre un humain au support ?**
-Par **courriel** (info@constructoai.ca) ou par **téléphone** (1 936 587-1141). Il n'y a pas de clavardage en direct ni de système de billets.
+Par **courriel** (info@constructoai.ca) ou par **téléphone** (1 514 820-1972). Il n'y a pas de clavardage en direct ni de système de billets.
 
 **Je ne vois pas le courriel du support sur mon ordinateur.**
 Sur bureau, le courriel n'est pas dans la barre latérale : il figure au **pied du tiroir mobile** et sur les **pages de connexion**. Adresse : info@constructoai.ca. Le seul contact présent dans la barre latérale de bureau est le lien **Téléphone**.
 
 **Le numéro s'affiche différemment à deux endroits — est-ce le même ?**
-Oui. `1 936 587-1141` (lien de la section) et `1 (936) 587-1141` (pied mobile) composent tous deux `+19365871141`. Simple différence de présentation.
+Oui. `1 514 820-1972` (lien de la section) et `1 (514) 820-1972` (pied mobile) composent tous deux `+15148201972`. Simple différence de présentation.
 
 **Un employé voit-il moins de ressources qu'un administrateur ?**
 Non. Les 4 liens ne sont soumis à aucun filtrage de rôle : tout utilisateur connecté voit exactement la même chose.
@@ -405,10 +405,10 @@ Toute évolution serait documentée dans une version future de ce manuel. En l'�
 
 - **Cadrage** : « Aide et ressources » (`nav.aideRessources` = « AIDE & RESSOURCES ») n'est **pas un module fonctionnel** — c'est un **bloc statique de 4 liens** au bas de la barre latérale (`Sidebar.tsx:244-297`). Aucune route interne, aucun serveur, aucune base de données.
 - **Aucun backend** : 0 point d'entrée FastAPI, 0 table PostgreSQL, 0 garde de rôle, 0 effet d'argent, 0 appel réseau vers l'ERP.
-- **Les 4 liens** : **Vidéos** (YouTube), **Manuel** (README GitHub), **Téléphone** (`tel:+19365871141`, affiché 1 936 587-1141), **Liens utiles** (GitHub liens-utiles.md). Trois sont externes (`target="_blank"` + `rel="noopener noreferrer"`) ; le Téléphone ouvre le composeur (`external:false`).
+- **Les 4 liens** : **Vidéos** (YouTube), **Manuel** (README GitHub), **Téléphone** (`tel:+15148201972`, affiché 1 514 820-1972), **Liens utiles** (GitHub liens-utiles.md). Trois sont externes (`target="_blank"` + `rel="noopener noreferrer"`) ; le Téléphone ouvre le composeur (`external:false`).
 - **Toujours visibles** : la section n'est pas filtrée par rôle — administrateur comme employé voient les mêmes ressources.
 - **En-tête repliable**, déployé par défaut ; l'état de repli est une préférence de session, réinitialisée au rechargement complet.
-- **Modes d'affichage** : barre déployée (icône + libellé) ; barre réduite (icônes + infobulles, en-tête masqué) ; mobile (cibles 44 px + **pied avec courriel info@constructoai.ca, téléphone 1 (936) 587-1141 et version v1.0**).
+- **Modes d'affichage** : barre déployée (icône + libellé) ; barre réduite (icônes + infobulles, en-tête masqué) ; mobile (cibles 44 px + **pied avec courriel info@constructoai.ca, téléphone 1 (514) 820-1972 et version v1.0**).
 - **Courriel du support** : présent **au pied mobile** et sur les **pages de connexion** — **pas** dans la barre latérale de bureau, et **pas** parmi les 4 liens.
 - **Aide assistée dans l'ERP** : le bouton **Assistant IA** (étincelles) de la barre supérieure (`TopBar.tsx:312-320`) — **module distinct**, seul point d'entrée vers `/assistant-ia`.
 - **Chatbot public « Sylvain »** (avant connexion) oriente les visiteurs et redirige les questions techniques vers le courriel / le téléphone — hors de la section.

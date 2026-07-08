@@ -500,7 +500,7 @@ Non. Les fiches vivent dans la table `voice_knowledge_base` **de votre entrepris
 **« Clara », est-ce un agent unique partagé entre toutes les entreprises ?**
 Non. **Clara est le nom par défaut**, personnalisé au nom de **chaque entreprise** (l'accueil et le script disent « l'assistante virtuelle de [votre entreprise] »). Chaque entreprise a sa propre configuration et son propre assistant Vapi. Il n'existe pas d'objet « clone » distinct : une entreprise = une ligne de configuration + son assistant routé.
 
-**Le numéro de démonstration (par exemple +1 936 587-1141) est-il codé en dur ?**
+**Le numéro de démonstration (par exemple +1 514 820-1972) est-il codé en dur ?**
 Non. Le routage numéro → entreprise est **piloté par les données** (table `voice_phone_routing`). Un « numéro de démonstration » est simplement une ligne de cette table, pas une constante de l'application.
 
 **Que se passe-t-il si Vapi rejoue deux fois le même rapport de fin d'appel ?**

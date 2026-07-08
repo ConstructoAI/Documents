@@ -91,14 +91,14 @@ Source: `Sidebar.tsx:259-262`. Each entry is an `<a href>` tag (so it **leaves**
 |---|---|---|---|---|---|---|
 | 1 | **Videos** | `nav.helpResources.videos` | `https://www.youtube.com/channel/UC3EGXYQNj5UYGiyNfiiom_A` | External (new tab) | `Video` (18) | "External link" glyph (`ExternalLink`, 10, dimmed) |
 | 2 | **Manual** | `nav.helpResources.manuel` | `https://github.com/ConstructoAI/Documents/blob/main/README.md` | External (new tab) | `BookOpen` (18) | "External link" glyph |
-| 3 | **Phone** | `nav.helpResources.telephone` | `tel:+19365871141` | **Non-external** (dialer) | `Phone` (18) | **Text** `1 936 587-1141` |
+| 3 | **Phone** | `nav.helpResources.telephone` | `tel:+15148201972` | **Non-external** (dialer) | `Phone` (18) | **Text** `1 514 820-1972` |
 | 4 | **Useful links** | `nav.helpResources.usefulLinks` | `https://github.com/ConstructoAI/Documents/blob/main/liens-utiles.md` | External (new tab) | `ExternalLink` (18) | "External link" glyph |
 
 Rendering rules (`Sidebar.tsx:263-295`):
 
 - **Label**: comes from the translation, `t(link.labelKey)` (`Sidebar.tsx:264`) — it is no longer hard-coded in the component.
 - **New tab**: only for external links. `target="_blank"` and `rel="noopener noreferrer"` are applied **only** when `external` is true (`Sidebar.tsx:269-270`). The Phone link (`external:false`) therefore opens **no** tab.
-- **Trailing element** (`Sidebar.tsx:288-292`): if the link is external, a small dimmed "external link" glyph appears on the right; otherwise, if it has trailing text (`trailingText`), that text is shown (the Phone case, which displays the number `1 936 587-1141`); otherwise, nothing.
+- **Trailing element** (`Sidebar.tsx:288-292`): if the link is external, a small dimmed "external link" glyph appears on the right; otherwise, if it has trailing text (`trailingText`), that text is shown (the Phone case, which displays the number `1 514 820-1972`); otherwise, nothing.
 - None of these links go through the role filter: they are rendered **unconditionally** for every signed-in user.
 
 #### 2.2.1 Videos
@@ -113,7 +113,7 @@ Points to the **README.md** of the public `ConstructoAI/Documents` repository �
 
 #### 2.2.3 Phone
 
-`tel:+19365871141` link. It is the section's **only non-external link** (`external:false`, `Sidebar.tsx:261`): it opens no tab; it asks the operating system to dial the number (useful mainly on mobile, or with softphone software on a computer). The number appears as text to the right of the label: **1 936 587-1141**.
+`tel:+15148201972` link. It is the section's **only non-external link** (`external:false`, `Sidebar.tsx:261`): it opens no tab; it asks the operating system to dial the number (useful mainly on mobile, or with softphone software on a computer). The number appears as text to the right of the label: **1 514 820-1972**.
 
 #### 2.2.4 Useful links
 
@@ -144,7 +144,7 @@ At the bottom of the mobile drawer — and **nowhere on desktop** — there is a
 
 - **Version**: "Constructo AI ERP AI v1.0" (`Sidebar.tsx:383`).
 - **Email**: `mailto:info@constructoai.ca`, displayed as **info@constructoai.ca** (`Sidebar.tsx:385`). This is the **only place in the sidebar** that exposes the email address as a clickable link.
-- **Phone**: `tel:+19365871141`, displayed as **1 (936) 587-1141** (`Sidebar.tsx:387`).
+- **Phone**: `tel:+15148201972`, displayed as **1 (514) 820-1972** (`Sidebar.tsx:387`).
 
 > **Note**: on **desktop**, the sidebar footer (`Sidebar.tsx:344-353`) contains **only** the button to collapse / expand the sidebar — no email, no version. The only contact present in the desktop sidebar is therefore the **Phone** link in the Help section.
 
@@ -182,7 +182,7 @@ These procedures follow directly from the behavior described in section 2. None 
 
 ### 3.3 Call support
 
-1. "HELP & RESOURCES" section → **Phone** (number displayed: 1 936 587-1141).
+1. "HELP & RESOURCES" section → **Phone** (number displayed: 1 514 820-1972).
 2. On a device with telephony (mobile, or calling software on a computer), the dialer opens with the number pre-filled. No new tab opens.
 3. On a workstation without a telephony application, the click may do nothing: dial the number manually in that case.
 
@@ -209,7 +209,7 @@ Email is **not** one of the section's 4 links; it is found elsewhere in the appl
 ### 3.7 Find help when the sidebar is in icon mode
 
 1. If the sidebar is collapsed (icons only), the "HELP & RESOURCES" header is hidden, but the 4 icons stay visible.
-2. Hover over an icon to show its tooltip (for example "Phone 1 936 587-1141").
+2. Hover over an icon to show its tooltip (for example "Phone 1 514 820-1972").
 3. Click the icon you want — the behavior (new tab or dialer) is identical to expanded mode.
 
 ### 3.8 Get AI-assisted help in the ERP (AI Assistant)
@@ -227,7 +227,7 @@ Email is **not** one of the section's 4 links; it is found elsewhere in the appl
 | Learn how to use a module | **Videos** or **Manual** |
 | Find an official reference (RBQ, CCQ, CNESST, taxes) | **Useful links** |
 | Quick question about my data in the ERP | **AI Assistant** (top bar) |
-| Technical problem, bug, billing, integration | **Email** info@constructoai.ca or **Phone** 1 936 587-1141 |
+| Technical problem, bug, billing, integration | **Email** info@constructoai.ca or **Phone** 1 514 820-1972 |
 | Discovery / questions before subscribing | Public "Sylvain" chatbot on the login page (see 5.2) |
 
 ---
@@ -257,7 +257,7 @@ Source: `Sidebar.tsx:259-262`.
 |---|---|---|---|---|---|---|
 | 1 | Vidéos / Videos | `nav.helpResources.videos` | `https://www.youtube.com/channel/UC3EGXYQNj5UYGiyNfiiom_A` | `true` | `Video` (18) | external glyph |
 | 2 | Manuel / Manual | `nav.helpResources.manuel` | `https://github.com/ConstructoAI/Documents/blob/main/README.md` | `true` | `BookOpen` (18) | external glyph |
-| 3 | Téléphone / Phone | `nav.helpResources.telephone` | `tel:+19365871141` | `false` | `Phone` (18) | text `1 936 587-1141` |
+| 3 | Téléphone / Phone | `nav.helpResources.telephone` | `tel:+15148201972` | `false` | `Phone` (18) | text `1 514 820-1972` |
 | 4 | Liens utiles / Useful links | `nav.helpResources.usefulLinks` | `https://github.com/ConstructoAI/Documents/blob/main/liens-utiles.md` | `true` | `ExternalLink` (18) | external glyph |
 
 ### 4.3 Translations (i18n)
@@ -288,19 +288,19 @@ Source: `fr/nav.json:41-47` and `en/nav.json:41-47`. Full FR/EN parity (the titl
 | Videos (YouTube) | Official channel | Link 1 of the section | No (external) |
 | Manual (GitHub) | `ConstructoAI/Documents` README | Link 2 of the section | No (public GitHub) |
 | Useful links (GitHub) | `ConstructoAI/Documents` liens-utiles.md | Link 4 of the section | No |
-| Phone | **1 936 587-1141** (`tel:+19365871141`) | Link 3 of the section + mobile footer | No (system dialer) |
+| Phone | **1 514 820-1972** (`tel:+15148201972`) | Link 3 of the section + mobile footer | No (system dialer) |
 | Email | **info@constructoai.ca** | Mobile footer + login/registration pages | No (email application) |
 | AI Assistant (in-app) | `/assistant-ia` | Sparkles button in the top bar | Yes — **separate module** (`routers/ai.py`) |
 | "Sylvain" chatbot (before sign-in) | Public login page | `app.constructoai.ca` | Yes — **separate module** (`routers/voice.py`) |
 
-> **Number format**: same number everywhere (`+19365871141`), but shown differently — the section link shows `1 936 587-1141` (`Sidebar.tsx:261`), while the mobile footer and the public chatbot display `1 (936) 587-1141` (`Sidebar.tsx:387`). A simple presentation difference.
+> **Number format**: same number everywhere (`+15148201972`), but shown differently — the section link shows `1 514 820-1972` (`Sidebar.tsx:261`), while the mobile footer and the public chatbot display `1 (514) 820-1972` (`Sidebar.tsx:387`). A simple presentation difference.
 
 ### 4.6 Configurability
 
 | Setting | Value | User-editable? |
 |---|---|---|
 | URLs of the 4 links | Hard-coded (`Sidebar.tsx:259-262`) | No |
-| Phone number | `+19365871141` (hard-coded) | No |
+| Phone number | `+15148201972` (hard-coded) | No |
 | Email address | `info@constructoai.ca` (hard-coded) | No |
 | Labels | `nav.helpResources.*` translations | No (requires updating the language files) |
 | Order / number of links | 4, fixed | No |
@@ -338,7 +338,7 @@ The AI Assistant is the only **in-app assisted** help in the ERP, but it is not 
 
 ### 5.2 Relationship to the public "Sylvain" chatbot
 
-Before sign-in, the public login page (`app.constructoai.ca`) offers a conversational assistant — "Sylvain" (system prompt `backend/sylvain_prompt.py`, server `routers/voice.py`, prefixes `/voice` and `/api/voice`). Its role is to guide visitors and to **redirect technical or integration questions** to email **info@constructoai.ca** or phone **1 (936) 587-1141**, and to the YouTube **videos** for discovery. It **normalizes** the number's display (`+1 936-587-1141` → `19365871141`, `voice.py:356`). This chatbot is **separate** from the Help and resources section and is not accessible from the signed-in shell.
+Before sign-in, the public login page (`app.constructoai.ca`) offers a conversational assistant — "Sylvain" (system prompt `backend/sylvain_prompt.py`, server `routers/voice.py`, prefixes `/voice` and `/api/voice`). Its role is to guide visitors and to **redirect technical or integration questions** to email **info@constructoai.ca** or phone **1 (514) 820-1972**, and to the YouTube **videos** for discovery. It **normalizes** the number's display (`+1 514-820-1972` → `15148201972`, `voice.py:356`). This chatbot is **separate** from the Help and resources section and is not accessible from the signed-in shell.
 
 ### 5.3 The `ConstructoAI/Documents` GitHub repository
 
@@ -373,13 +373,13 @@ Online. The "Manual" link opens the README of the `ConstructoAI/Documents` GitHu
 Yes. The link points to the **README** (the documentation index), not to a specific module. From this index, you open the detailed manual for the module you want.
 
 **How do I reach a human at support?**
-By **email** (info@constructoai.ca) or by **phone** (1 936 587-1141). There is no live chat and no ticketing system.
+By **email** (info@constructoai.ca) or by **phone** (1 514 820-1972). There is no live chat and no ticketing system.
 
 **I don't see the support email on my computer.**
 On desktop, email is not in the sidebar: it appears in the **mobile drawer footer** and on the **login pages**. Address: info@constructoai.ca. The only contact present in the desktop sidebar is the **Phone** link.
 
 **The number is displayed differently in two places — is it the same one?**
-Yes. `1 936 587-1141` (section link) and `1 (936) 587-1141` (mobile footer) both dial `+19365871141`. A simple presentation difference.
+Yes. `1 514 820-1972` (section link) and `1 (514) 820-1972` (mobile footer) both dial `+15148201972`. A simple presentation difference.
 
 **Does an employee see fewer resources than an administrator?**
 No. The 4 links are subject to no role filtering: every signed-in user sees exactly the same thing.
@@ -405,10 +405,10 @@ Any evolution would be documented in a future version of this manual. As it stan
 
 - **Scope**: "Help and resources" (`nav.aideRessources` = "HELP & RESOURCES") is **not a functional module** — it is a **static block of 4 links** at the bottom of the sidebar (`Sidebar.tsx:244-297`). No internal route, no server, no database.
 - **No backend**: 0 FastAPI endpoints, 0 PostgreSQL tables, 0 role guards, 0 money effects, 0 network calls to the ERP.
-- **The 4 links**: **Videos** (YouTube), **Manual** (GitHub README), **Phone** (`tel:+19365871141`, displayed as 1 936 587-1141), **Useful links** (GitHub liens-utiles.md). Three are external (`target="_blank"` + `rel="noopener noreferrer"`); Phone opens the dialer (`external:false`).
+- **The 4 links**: **Videos** (YouTube), **Manual** (GitHub README), **Phone** (`tel:+15148201972`, displayed as 1 514 820-1972), **Useful links** (GitHub liens-utiles.md). Three are external (`target="_blank"` + `rel="noopener noreferrer"`); Phone opens the dialer (`external:false`).
 - **Always visible**: the section is not filtered by role — administrator and employee alike see the same resources.
 - **Collapsible header**, expanded by default; the collapse state is a session preference, reset on a full reload.
-- **Display modes**: expanded sidebar (icon + label); collapsed sidebar (icons + tooltips, header hidden); mobile (44 px targets + **footer with email info@constructoai.ca, phone 1 (936) 587-1141, and version v1.0**).
+- **Display modes**: expanded sidebar (icon + label); collapsed sidebar (icons + tooltips, header hidden); mobile (44 px targets + **footer with email info@constructoai.ca, phone 1 (514) 820-1972, and version v1.0**).
 - **Support email**: present **in the mobile footer** and on the **login pages** — **not** in the desktop sidebar, and **not** among the 4 links.
 - **In-ERP assisted help**: the **AI Assistant** button (sparkles) in the top bar (`TopBar.tsx:312-320`) — a **separate module**, the only entry point to `/assistant-ia`.
 - **Public "Sylvain" chatbot** (before sign-in) guides visitors and redirects technical questions to email / phone — outside the section.

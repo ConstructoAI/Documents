@@ -276,7 +276,7 @@ This is the **paid professional service**. Here you request a detailed estimate 
 | **MOYEN** (Medium) | **$275** | "Most common" badge |
 | **COMPLEXE** (Complex) | **$350** | — |
 
-Three notes accompany the prices, including **"Billing only upon delivery of the completed quote"**. Contacts shown: `info@constructoai.ca` and 1 (936) 587-1141.
+Three notes accompany the prices, including **"Billing only upon delivery of the completed quote"**. Contacts shown: `info@constructoai.ca` and 1 (514) 820-1972.
 
 **4-step wizard:**
 

@@ -129,7 +129,7 @@ Chaque affirmation est traçable jusqu'au code (`ERP_REACT/backend/routers/*.py`
 
 - Chaque module dispose de son manuel dans ce dossier (français) et dans [`en/`](en/) (anglais).
 - Voir aussi le fichier [liens-utiles.md](liens-utiles.md) pour des ressources externes (RBQ, CCQ, CNESST, programmes de subventions, etc.).
-- Support : **info@constructoai.ca** | **1 (936) 587-1141**.
+- Support : **info@constructoai.ca** | **1 (514) 820-1972**.
 
 ---
 
@@ -149,7 +149,7 @@ Chaque affirmation est traçable jusqu'au code (`ERP_REACT/backend/routers/*.py`
 
 - **Assistant IA** : disponible dans l'application.
 - **Courriel** : info@constructoai.ca
-- **Téléphone** : 1 (936) 587-1141
+- **Téléphone** : 1 (514) 820-1972
 
 ---
 

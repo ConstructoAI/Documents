@@ -276,7 +276,7 @@ C'est le **service professionnel payant**. On y demande une estimation détaill�
 | **MOYEN** | **275 $** | Badge « Le plus courant » |
 | **COMPLEXE** | **350 $** | — |
 
-Trois mentions accompagnent les prix, dont **« Facturation uniquement à la livraison de la soumission complétée »**. Contacts affichés : `info@constructoai.ca` et 1 (936) 587-1141.
+Trois mentions accompagnent les prix, dont **« Facturation uniquement à la livraison de la soumission complétée »**. Contacts affichés : `info@constructoai.ca` et 1 (514) 820-1972.
 
 **Assistant en 4 étapes :**
 
