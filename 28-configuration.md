@@ -1,874 +1,783 @@
-# Module 28 — Administration
+# Module 28 — Configuration (entreprise, utilisateurs, abonnement)
 
-> **Version** : 2.0 (refonte verifiee contre code source)
-> **Code de reference** : `backend/routers/admin.py` (1379 lignes — super-admin), `backend/routers/auth.py` (698 lignes), `backend/routers/config.py` (1167 lignes — tenant admin), `backend/routers/conformite.py` (2192 lignes — RBQ/CCQ/CNESST), `backend/routers/integration.py` (QuickBooks/Sage 50), `backend/routers/subventions.py`, `backend/routers/calculators.py`, `backend/routers/fonds_prevoyance.py` (Loi 16), `frontend/src/pages/AdminPage.tsx` (6 onglets), `frontend/src/pages/ConfigurationPage.tsx` (7 onglets), `frontend/src/pages/IntegrationPage.tsx` (6 onglets), `frontend/src/pages/ConformitePage.tsx`, `frontend/src/pages/SubventionsPage.tsx`
-
-> **Note importante** : ce module couvre **3 niveaux distincts** d administration :
-> 1. **Super-admin** (page `/admin`) — gestion plateforme globale (tous les tenants)
-> 2. **Tenant admin** (page `/configuration`) — gestion utilisateurs et settings du tenant
-> 3. **Conformite** (page `/conformite`) — RBQ/CCQ/CNESST pour les entreprises de construction
+> **Version** : 3.0 (refonte vérifiée contre le code source, juillet 2026)
+> **Code de référence** :
+> - Frontend : `frontend/src/pages/ConfigurationPage.tsx` (4 108 lignes — page unique à **11 onglets**), client API `frontend/src/api/config.ts` (661 lignes) et `frontend/src/api/stripe.ts`, magasins d'état `frontend/src/store/useConfigStore.ts` (209 lignes), `frontend/src/store/useStripeStore.ts` (145 lignes) et `frontend/src/store/useUiThemeStore.ts` (236 lignes), traductions `frontend/src/i18n/locales/{fr,en}/config.json` (441 lignes chacune)
+> - Backend : `backend/routers/config.py` (3 247 lignes — **38 points d'accès**, préfixe réel `/api/erp/v1/config`), `backend/routers/stripe_routes.py` (379 lignes — **6 points d'accès**, préfixe `/api/erp/v1/stripe`), `backend/routers/html_utils.py` (thème des documents), gardes d'accès `backend/erp_auth.py`
+> - Onglet **Intégrations** : module séparé `frontend/src/pages/IntegrationPage.tsx` (1 608 lignes — **7 sous-onglets**) + router `backend/routers/integration.py` (hors du présent module ; voir le manuel dédié)
+> **Tables PostgreSQL** : `public.entreprises` (1 ligne par tenant — abonnement, taxes, devise, pays, fuseau, langue, retenue, exercice fiscal), `{tenant}.entreprise_config` (configuration en JSON : logo, coordonnées, thème des documents, catégories de fournisseurs, clés libres), `{tenant}.users` (comptes et rôles), `{tenant}.payroll_config` (renseignements employeur), `{tenant}.webhooks` / `{tenant}.webhook_deliveries` (points d'ancrage sortants, sans interface). Facturation via les tables partagées Stripe et le registre de crédits IA prépayés.
+> **Cadrage** : la Configuration est le **centre de paramétrage** de votre entreprise dans l'ERP. Une seule page à onglets réunit votre **profil** personnel, la **gestion des utilisateurs** (comptes et droits), l'**identité de l'entreprise** (logo, coordonnées, numéros RBQ/NEQ/TPS/TVQ), l'**apparence** de vos documents et de votre interface, la **fiscalité** (pays, devise, taxes, retenue de garantie, juridiction, exercice fiscal), la **langue** des documents, le **fuseau horaire**, votre **abonnement** et vos **crédits IA** (Stripe), et l'accès aux **intégrations comptables**. C'est un module d'administration : la plupart de ses onglets sont réservés à l'**administrateur** de l'entreprise.
 
 ---
 
 ## Sommaire
 
-1. [Vue d ensemble](#1-vue-d-ensemble)
-2. [Page /admin (Super-admin)](#2-page-admin-super-admin)
-3. [Page /configuration (Tenant admin)](#3-page-configuration-tenant-admin)
-4. [Page /conformite (RBQ/CCQ/CNESST)](#4-page-conformite-rbqccqcnesst)
-5. [Page /integration (QuickBooks/Sage 50)](#5-page-integration-quickbookssage-50)
-6. [Modules complementaires (Subventions, Calculateurs, Fonds Prevoyance)](#6-modules-complementaires)
-7. [Workflows pas-a-pas](#7-workflows-pas-a-pas)
-8. [Reference](#8-reference)
-9. [Integrations & FAQ](#9-integrations-faq)
-10. [Recap one-pager](#10-recap-one-pager)
+1. [Vue d'ensemble](#1-vue-densemble)
+2. [Interface](#2-interface)
+3. [Procédures pas à pas](#3-procédures-pas-à-pas)
+4. [Référence](#4-référence)
+5. [Intégrations et FAQ](#5-intégrations-et-faq)
+6. [Récapitulatif](#6-récapitulatif)
 
 ---
 
-## 1. Vue d ensemble
+## 1. Vue d'ensemble
 
-### 1.1 Architecture multi-tenant
+### 1.1 Mission du module
 
-L ERP utilise un **modele schema-per-tenant PostgreSQL** :
-- Schema `public` : table `entreprises` (info plateforme), table `representants`, tables Stripe (`ai_prepaid_credits`, `ai_usage_tracking`), tables session.
-- Schema `tenant_{slug}` : isolation complete par tenant (toutes les tables business : projets, factures, employes, etc.).
-- Schema reference : `REFERENCE_TENANT_SCHEMA` (env var, defaut `tenant_constructi_2802c4`) — utilise pour audit/repair.
+La page **Configuration** permet à l'entrepreneur de régler, en un seul endroit, tout ce qui gouverne le comportement de l'ERP pour son entreprise :
 
-A la connexion :
-- `POST /auth/tenant-login` (entreprise email/password) -> recupere `schema_name`.
-- `POST /auth/user-login` (username + password user) -> JWT avec `schema` + `role` + `user_id`.
-- Toutes les requetes ulterieures utilisent ce schema (`db.set_tenant`).
+- **Son compte** — modifier son nom, son courriel et son mot de passe.
+- **Les utilisateurs** — créer des comptes pour ses employés, leur attribuer un rôle, réinitialiser un mot de passe, désactiver un compte.
+- **L'identité de l'entreprise** — téléverser un logo, saisir l'adresse, les numéros RBQ, NEQ, TPS et TVQ. Ces renseignements apparaissent ensuite sur toutes les soumissions, factures et bons.
+- **L'apparence** — deux systèmes distincts : les **couleurs des documents** générés (soumissions, factures, bons, courriels) et les **couleurs de l'interface** de l'ERP.
+- **La fiscalité et la juridiction** — pays, devise, taxes de vente (TPS/TVQ ou autres), taux de retenue de garantie par défaut, état ou province, exercice fiscal, plus les renseignements employeur pour la paie et les catégories de fournisseurs.
+- **La langue des documents** — français ou anglais.
+- **Le fuseau horaire** — pour l'horodatage du pointage, des dates de création et des échéances.
+- **L'abonnement** — souscrire, gérer ou annuler l'abonnement, consulter et recharger les crédits IA (via Stripe).
+- **Les intégrations comptables** — brancher QuickBooks Online ou Sage (module séparé embarqué).
 
-### 1.2 3 niveaux d acces
+### 1.2 Ce que le module fait — et ne fait pas
 
-| Niveau            | Page              | Permissions                                          | Cible                       |
-|-------------------|-------------------|------------------------------------------------------|-----------------------------|
-| **Super-admin**   | `/admin`          | Acces TOUS les tenants, statistiques plateforme      | Owner (Sylvain Leduc) + reps|
-| **Tenant admin**  | `/configuration`  | Gestion users/config/theme du tenant uniquement     | Admin client                |
-| **User standard** | (pas d acces admin) | Lecture/ecriture metier seulement                  | Employes                    |
+| Le module **fait** | Le module **ne fait pas** |
+|---|---|
+| Créer, modifier et **désactiver** des utilisateurs | **Supprimer définitivement** un utilisateur (désactivation seulement) |
+| Attribuer des droits d'administrateur | Modifier le **nom d'utilisateur** après la création |
+| Personnaliser les couleurs des documents (en base) | Modifier les documents déjà envoyés (ils gardent leur rendu au moment de l'envoi) |
+| Personnaliser les couleurs de l'interface (par navigateur) | Synchroniser les couleurs d'interface entre vos appareils |
+| Régler taxes, devise, pays, retenue, exercice fiscal | Changer le **pays** une fois que vous avez des factures ou des écritures comptables |
+| Souscrire, gérer et annuler l'abonnement Stripe | Facturer votre carte sans passer par Stripe |
+| Recharger les crédits IA (paiement réel) | Rembourser des crédits IA depuis l'ERP |
+| Brancher QuickBooks / Sage (onglet Intégrations) | Gérer des **points d'ancrage (webhooks)** depuis la Configuration (aucun onglet actif) |
 
-### 1.3 5 roles utilisateurs
+### 1.3 Accès par le menu latéral
 
-Source : `config.py` `users.role` enum
+- **Menu latéral** → section **Système** → **Configuration** (icône `Settings`).
+- **Adresse** : `/configuration` (`App.tsx:257`).
+- **Onglet ouvert par défaut** : **Profil**.
+- **Ouverture directe de l'abonnement** : l'adresse `/configuration?tab=abonnement` ouvre directement l'onglet **Abonnement** (utilisé au retour d'un paiement Stripe).
+- Page protégée : il faut être authentifié dans un tenant.
 
-`admin` / `user` / `employee` / `comptable` / `gestionnaire` + flag `is_admin` (boolean superpose).
+### 1.4 Qui voit quoi : administrateur ou non
 
-### 1.4 Constantes financieres plateforme (super-admin P&L)
+Le module distingue deux profils d'utilisateur. Le signal d'administrateur est calculé ainsi (`ConfigurationPage.tsx:95`) :
 
-Source : `admin.py`
+> Vous êtes considéré comme **administrateur** si votre compte porte le drapeau `is_admin` (relu sur le serveur, donc infalsifiable), **ou** si votre rôle est `admin`, **ou** si vous êtes super-administrateur de la plateforme.
 
-| Constante              | Valeur     | Usage                                  |
-|------------------------|-----------|----------------------------------------|
-| `RENDER_MONTHLY_COST`  | 434.67 CAD | Hosting Render mensuel                 |
-| `ERP_MONTHLY_PRICE`    | 79.99 CAD  | Tarif fixe abonnement ERP (tous plans) |
-| `REP_COMMISSION_RATE`  | 0.40 (40%) | Commission representant                |
-| `CORPORATE_TAX_RATE`   | 0.265      | Federal 15% + Quebec 11.5%             |
-| `OWNER_NAME`           | `Sylvain Leduc` | Pas de commission si rep = owner   |
+Six onglets sont **réservés aux administrateurs** (`adminOnly`) : **Utilisateurs**, **Apparence**, **Juridiction & Devise**, **Taxes**, **Préférences**, **Fuseau horaire**. Ils sont **masqués** aux utilisateurs ordinaires.
 
----
+| Profil | Onglets visibles | Nombre |
+|---|---|---|
+| **Administrateur** | Les 11 onglets | **11** |
+| **Utilisateur ordinaire** | Profil, Entreprise (en lecture seule), Interface, Abonnement, Intégrations | **5** |
 
-## 2. Page `/admin` (Super-admin)
+> **Important** : masquer un onglet est un confort d'affichage, pas une sécurité. La vraie protection est **côté serveur** : chaque écriture (création d'utilisateur, changement de taxe, etc.) exige le droit d'administrateur, vérifié par la garde `require_tenant_admin_or_role` sur le serveur. Un utilisateur ordinaire qui atteindrait un de ces points d'accès se verrait refuser l'écriture.
 
-> **Reserve au super-admin** (`/auth/super-admin-login` -> session_token). Permet la gestion globale de la plateforme multi-tenant.
+### 1.5 Les rôles utilisateurs
 
-### 2.1 6 onglets AdminPage
+À la création d'un compte, vous choisissez un **rôle** parmi cinq (`ConfigurationPage.tsx:72-78`) :
 
-| # | Onglet              | Contenu                                                                |
-|---|---------------------|------------------------------------------------------------------------|
-| 1 | **Entreprises**     | Liste tenants : id, nom, slug, user_count, subscription_status, actif toggle |
-| 2 | **En Ligne**        | Sessions actives + stats + login_trend 30j + peak_hours + top 10 users |
-| 3 | **Usage IA**        | Cout/revenu IA mensuel : total_cost, anthropic_cost, profit, by_company, daily_trend, by_feature |
-| 4 | **Finances**        | P&L plateforme : abonnements + IA + commissions - couts - taxes        |
-| 5 | **Mises a jour**    | Broadcast messages a tous les tenants                                  |
-| 6 | **Representants**   | CRUD representants commerciaux (40% commission)                        |
+| Rôle | Libellé | Usage indicatif |
+|---|---|---|
+| `admin` | **Administrateur** | Accès complet à l'entreprise |
+| `user` | **Utilisateur** | Accès métier standard |
+| `employee` | **Employé** | Souvent lié à une fiche employé |
+| `comptable` | **Comptable** | Orienté comptabilité et paie |
+| `gestionnaire` | **Gestionnaire** | Orienté pilotage |
 
-### 2.2 Onglet « Entreprises »
+> **À savoir** : ces cinq rôles servent surtout à l'affichage et à quelques gardes ciblées (par exemple, le rôle **comptable** peut lire les renseignements employeur, et il ouvre les fonctions sensibles de la Comptabilité). Le **vrai** contrôle d'accès de la Configuration repose sur le drapeau **Administrateur** (`is_admin`), pas sur l'intitulé du rôle. Autrement dit, cochez « Administrateur » pour accorder les pleins droits, quel que soit le rôle affiché. Le serveur **refuse** en revanche d'attribuer le rôle réservé « super-administrateur » de la plateforme (message d'erreur 422) : ce statut ne se donne pas depuis un tenant.
 
-`GET /admin/entreprises` -> tableau :
-- id, nom, slug, email, representant
-- subscription_status (Stripe), plan_type, trial_end_date
-- active (toggle bouton)
-- user_count
+### 1.6 Les 11 onglets
 
-Actions :
-- **Toggle activate/deactivate** : `PUT /admin/entreprises/{id}/toggle`
-- **Assigner representant** : `PUT /admin/entreprises/{id}/representant`
-- **Audit schema** : `GET /admin/tenants/{slug}/audit` -> verifie tables/views/columns vs reference
-- **Repair schema** : `POST /admin/tenants/{slug}/repair` -> applique les diffs idempotemment
-- **Repair-all-known-fixes** : `POST /admin/tenants/repair-all-known-fixes` -> bulk fix tous les tenants
-- **Reset password** : `POST /admin/tenants/{slug}/reset-passwords` (entreprise login OU user)
+Source : tableau `TABS` (`ConfigurationPage.tsx:55-69`).
 
-### 2.3 Onglet « En Ligne »
+| # | Onglet | Réservé admin ? | Rôle |
+|---|---|---|---|
+| 1 | **Profil** | Non (chacun le sien) | Nom, courriel, mot de passe de l'utilisateur courant |
+| 2 | **Utilisateurs** | **Oui** | Comptes et droits des employés |
+| 3 | **Entreprise** | Non (édition réservée admin) | Logo, coordonnées, numéros ; configuration système |
+| 4 | **Apparence** | **Oui** | Couleurs des documents générés |
+| 5 | **Interface** | Non (par utilisateur) | Couleurs de l'interface de l'ERP |
+| 6 | **Juridiction & Devise** | **Oui** | Pays, devise, retenue, état/province, exercice fiscal, employeur, catégories |
+| 7 | **Taxes** | **Oui** | Deux taxes de vente configurables |
+| 8 | **Préférences** | **Oui** | Langue des documents (FR / EN) |
+| 9 | **Fuseau horaire** | **Oui** | Fuseau du tenant |
+| 10 | **Abonnement** | Non | Abonnement Stripe et crédits IA |
+| 11 | **Intégrations** | Non | QuickBooks / Sage (module séparé) |
 
-`GET /admin/online?threshold_minutes=30` (5-120 min, defaut 30) :
-- **Stats** : `erp_online`, `experts_online` (counts par produit)
-- **Sessions** : liste sessions actives (user, entreprise, login_time, last_activity)
-- **By entreprise** : pie chart repartition
-- **Login trend 30j** : graphique area
-- **Peak hours** : heatmap heures de pointe
-- **Top 10 users** : utilisateurs les plus connectes
+### 1.7 Deux systèmes de couleurs à ne pas confondre
 
-### 2.4 Onglet « Usage IA »
+Le module comporte **deux** onglets de couleurs, indépendants l'un de l'autre :
 
-`GET /admin/ai-usage?month=X&year=Y` :
-- **Total cost USD** : `SUM(ai_usage_tracking.cost_usd)`
-- **Anthropic cost** : cout brut sans markup
-- **Profit** : revenu - cout (markup 30%)
-- **By company** : tableau par tenant (`balance_usd` + `total_charged_usd` + `total_consumed_usd`)
-- **Daily trend** : graphique area journalier
-- **By feature** : pie chart (chat, invoice_scan, immobilier_*, etc.)
+| Aspect | Onglet **Apparence** | Onglet **Interface** |
+|---|---|---|
+| Ce qui change | Les **documents** générés (soumissions, factures, bons, courriels clients) | L'**interface** de l'ERP (barre latérale, barre du haut, boutons) |
+| Portée | Toute l'entreprise (tous les utilisateurs) | **Votre compte, sur ce navigateur** seulement |
+| Où c'est enregistré | En base de données (`document_theme`) | Dans le navigateur (mémoire locale), **sans** appel au serveur |
+| Qui peut modifier | Administrateur seulement | Chaque utilisateur pour lui-même |
+| Nombre de couleurs | **8** | **4** |
 
-### 2.5 Onglet « Finances » (P&L plateforme)
+> Ni l'un ni l'autre ne touche au mode clair/sombre du système, qui est un réglage distinct de votre navigateur.
 
-`GET /admin/finances?month=X&year=Y` :
+### 1.8 Mode consultation (lecture seule)
 
-**Revenus** :
-- Subscription revenue : `count(active subscriptions) * 79.99`
-- AI revenue : revenue genere depuis credits IA preconsommes
+Le paiement de l'abonnement conditionne l'écriture dans tout l'ERP, y compris la Configuration. Un tenant **sans abonnement Stripe actif** (abonnement annulé, sans carte enregistrée) bascule en **mode consultation** : la lecture reste possible, mais **toutes les écritures de `/config/*` sont bloquées** (réponse « 403 — Mode consultation »).
 
-**Couts** :
-- Render hosting : `434.67 CAD/mois`
-- Anthropic API : cout brut tokens
-- Commissions : `40% * subscription_revenue` par tenant avec representant != owner
+Deux exceptions échappent au blocage, précisément pour vous laisser régulariser : les appels de **réabonnement et de paiement** (`/stripe/*`) et la **déconnexion** (`/auth/*`) restent autorisés. C'est pourquoi, même en mode consultation, l'onglet **Abonnement** demeure pleinement fonctionnel pour souscrire de nouveau ou recharger.
 
-**Resultat** :
-- Profit avant taxes
-- Taxes (26.5%)
-- **Profit apres taxes**
-
-Detail :
-- `subscriptions_detail` : liste detaillee abonnements actifs
-- `commissions_by_rep` : commissions par representant
-
-### 2.6 Onglet « Mises a jour »
-
-`GET /admin/updates` / `POST /admin/updates` :
-- Broadcast messages a tous les tenants (banner UI)
-- Champs : message, message_type (`info`, `warning`, `success`), is_active
-- Affichage cote tenant : banner en haut de page (a verifier en prod)
-
-### 2.7 Onglet « Representants »
-
-`GET /admin/representants` / `POST` / `PUT` / `DELETE` :
-- CRUD representants commerciaux
-- Champs : nom (obligatoire), email, telephone, actif
-- Assignation aux entreprises via `entreprises.representant`
-- A l update du nom : cascade sur `entreprises` (UPDATE references)
-
-> **Owner Sylvain Leduc** : commission 0% (constante `OWNER_NAME`).
+> Ce mécanisme est global à l'ERP (défini dans `erp_auth.py` et `erp_stripe.py`), pas propre à la Configuration. Il connaît trois états : **`full`** (tout autorisé), **`readonly`** (lecture seule + réabonnement) et **`blocked`** (entreprise désactivée → session coupée). Sur une instance interne où la facturation est désactivée (`ERP_BILLING_ENABLED=false`) ou en mode développement, tout est en `full`.
 
 ---
 
-## 3. Page `/configuration` (Tenant admin)
+## 2. Interface
 
-> Accessible aux utilisateurs `is_admin = true` du tenant (pas super-admin).
+### 2.1 Disposition générale
 
-### 3.1 7 onglets ConfigurationPage
+En haut, le titre **« Configuration »**. Juste en dessous, une **barre d'onglets** horizontale déroulante ; les onglets réservés aux administrateurs n'y figurent pas pour un utilisateur ordinaire. Le contenu change selon l'onglet actif.
 
-| # | Onglet              | Reserve admin ? | Contenu                                                  |
-|---|---------------------|-----------------|----------------------------------------------------------|
-| 1 | **Profil**          | Non (self)      | Modifier full_name, email, password (utilisateur courant)|
-| 2 | **Utilisateurs**    | OUI             | CRUD users du tenant                                     |
-| 3 | **Entreprise**      | OUI             | Config JSON (logo, coordonnees, parametres metier)       |
-| 4 | **Soumissions**     | OUI             | Conditions/exclusions par defaut documents               |
-| 5 | **Apparence**       | OUI             | Theme couleurs documents (8 champs hex)                  |
-| 6 | **Abonnement**      | Non (lecture)   | Statut Stripe, credits IA, factures plateforme           |
-| 7 | **Integrations**    | OUI             | QuickBooks / Sage 50 / Webhooks (cf. section 5)          |
+Deux **bannières** peuvent apparaître au-dessus du contenu :
+- une bannière **rouge** en cas d'erreur ;
+- une bannière **verte** en cas de succès, qui **disparaît d'elle-même après 3 secondes**.
 
-### 3.2 Onglet « Utilisateurs »
+Sur l'onglet **Abonnement**, ces bannières proviennent du sous-système Stripe (elles reflètent les messages de paiement).
 
-`GET /config/users` -> liste users du tenant.
+### 2.2 Onglet « Profil »
 
-Colonnes :
-- username, email, full_name, role, is_admin, active, last_login
+*Accessible à tous.* Deux cartes côte à côte.
 
-Actions :
-- **+ Nouvel utilisateur** : `POST /config/users` (username + password >= 6 chars + email + full_name + role + is_admin)
-- **Modifier** : `PUT /config/users/{user_id}`
-- **Desactiver** : `DELETE /config/users/{user_id}` -> SET active=false (interdit auto-desactivation)
-- **Reset password** : `PUT /config/users/{user_id}/password` (admin OR self, min 6 chars)
+**Carte « Informations personnelles »**
 
-### 3.3 Onglet « Entreprise »
+| Élément | Détail |
+|---|---|
+| Badge de rôle + `@nom_utilisateur` | En lecture seule (le nom d'utilisateur ne se modifie pas). |
+| **Nom complet** | Champ texte modifiable. |
+| **Courriel** | Champ courriel modifiable. |
+| Bouton **Enregistrer** | Sauvegarde le nom et le courriel. Protégé contre le double-clic (roue animée pendant l'envoi). |
 
-`GET /config/entreprise` / `PUT /config/entreprise/{cle}` :
-- Stocke des `key/value` (JSON `config_data`)
-- Cles courantes : `nom_entreprise`, `adresse`, `telephone`, `email`, `RBQ`, `NEQ`, `TPS`, `TVQ`, `logo_base64`, `conditions_paiement_defaut`, etc.
+**Carte « Changer le mot de passe »**
 
-### 3.4 Onglet « Apparence » (theme documents)
+| Élément | Détail |
+|---|---|
+| **Nouveau mot de passe** | Indication affichée : « Min. 6 caractères ». |
+| **Confirmer le mot de passe** | Doit être identique au précédent. |
+| Bouton **Modifier le mot de passe** | Désactivé tant que les deux champs sont vides. |
 
-`GET /config/document-theme` -> palette merge avec defaults.
+Contrôles à la saisie : moins de 6 caractères → « Le mot de passe doit avoir au moins 6 caractères » ; les deux champs diffèrent → « Les mots de passe ne correspondent pas ». Pendant le chargement initial, la page affiche « Chargement du profil... ».
 
-**8 couleurs personnalisables** (hex) :
+### 2.3 Onglet « Utilisateurs »
 
-| Cle              | Defaut    | Usage                                 |
-|------------------|-----------|---------------------------------------|
-| `primary`        | `#1F4E79` | Couleur principale (en-tetes)         |
-| `primary_dark`   | `#0D2F4F` | Variante foncee                       |
-| `accent`         | `#27A376` | Boutons accent (vert)                 |
-| `accent_light`   | `#4AB393` | Variante claire                       |
-| `header_text`    | `#FFFFFF` | Texte sur fond primary                |
-| `table_row_alt`  | `#EBF1F6` | Lignes tableau alternees              |
-| `info_bg`        | `#E3F2FD` | Fond infobulles                       |
-| `border`         | `#BDBDBD` | Bordures generiques                   |
+*Réservé aux administrateurs.* Entête de carte : **« Utilisateurs ({{nombre}}) »** avec deux boutons — **Rafraîchir** et **Nouvel utilisateur**.
 
-Source defaut : `html_utils.py` `DEFAULT_DOCUMENT_THEME`.
+**Tableau (vue ordinateur)** — colonnes :
 
-Actions :
-- **Modifier** : `PUT /config/document-theme` (validation hex `#RGB` ou `#RRGGBB`, race-safe SELECT FOR UPDATE)
-- **Reset** : `DELETE /config/document-theme` -> revient aux defaults
+| Colonne | Contenu |
+|---|---|
+| **Utilisateur** | Nom d'utilisateur ; une icône `Shield` violette signale un administrateur. |
+| **Nom** | Nom complet. |
+| **Courriel** | Adresse. |
+| **Rôle** | Badge (Administrateur / Utilisateur / Employé / Comptable / Gestionnaire). |
+| **Statut** | Badge **Actif** ou **Inactif**. |
+| **Actions** | Icônes (voir ci-dessous). |
 
-Le theme s applique a **tous les documents HTML** : devis, factures, BC, BT, emails. Apercu en temps reel dans la page (ThemePreview component).
+**Actions par ligne :**
+- **Modifier** (icône `Edit3`) — ouvre la fenêtre d'édition.
+- **Changer le mot de passe** (icône `Key`).
+- **Désactiver** (icône `XCircle`) — affichée **seulement** si la ligne n'est pas la vôtre et que le compte est actif. Une confirmation s'affiche : « Désactiver l'utilisateur {{nom}} ? ».
 
-### 3.5 Onglet « Abonnement »
+En vue mobile, chaque utilisateur est présenté sous forme de carte équivalente. Si la liste est vide : « Aucun utilisateur ».
 
-Affichage lecture seule :
-- Statut Stripe (`active`, `trialing`, `past_due`, `canceled`)
-- Trial end date
-- **Credits IA** : balance USD + monthly_limit_usd + auto_recharge ON/OFF
-- Liste factures plateforme (Stripe invoices)
-- Bouton **Recharger credits** (cf. Module 25 IA)
-- Bouton **Portail Stripe** (gestion carte)
+**Trois fenêtres (modales) :**
 
-### 3.6 Onglet « Profil » (self)
+**a) Nouvel utilisateur**
 
-`GET /config/profile` / `PUT /config/profile` :
-- Modifier `full_name`, `email`
-- Bouton changer password (modale separee)
+| Champ | Obligatoire | Détail |
+|---|---|---|
+| **Nom d'utilisateur** | Oui | Exemple affiché : « ex: jdupont ». Unique dans l'entreprise. |
+| **Mot de passe** | Oui | Minimum 6 caractères. |
+| **Nom complet** | Non | |
+| **Courriel** | Non | |
+| **Rôle** | Non | Menu déroulant à cinq valeurs. |
+| **Administrateur** | Non | Case à cocher (accorde les pleins droits). |
 
-### 3.7 Onglet « Soumissions » (admin)
+Boutons **Annuler** / **Créer** (le bouton Créer reste désactivé tant que le nom d'utilisateur ou le mot de passe sont vides). Le compte est créé **actif**.
 
-Configurations defaut documents :
-- Conditions de paiement defaut
-- Exclusions standard a inclure dans soumissions
-- Mentions legales
-- Affichables/non-affichables sur documents
+**b) Modifier : {{nom}}** — Nom complet, Courriel, Rôle, case **Administrateur**. Boutons **Annuler** / **Enregistrer**. *Le nom d'utilisateur n'y figure pas : il n'est pas modifiable.*
+
+**c) Changer le mot de passe** — Nouveau mot de passe, Confirmer. Mêmes contrôles (6 caractères, correspondance). Boutons **Annuler** / **Modifier**.
+
+**Deux garde-fous du serveur** empêchent de vous verrouiller dehors :
+- Impossible de **retirer le statut d'administrateur** au **dernier administrateur** de l'entreprise.
+- Impossible de **désactiver le dernier administrateur actif**.
+
+Dans les deux cas, l'opération est refusée avec un message explicite. La désactivation est une **suppression douce** (le compte passe « Inactif », il n'est jamais effacé) ; vous ne pouvez pas non plus vous désactiver vous-même.
+
+### 2.4 Onglet « Entreprise »
+
+*Visible par tous ; modifiable par les administrateurs seulement.* Deux sous-onglets : **Informations entreprise** (par défaut) et **Configuration système**.
+
+Pour un utilisateur non-administrateur, une bande ambre s'affiche : **« Lecture seule : seul un administrateur de l'entreprise peut modifier ces informations. »** ; tous les champs sont alors verrouillés.
+
+**a) Informations entreprise**
+
+**Logo.** Aperçu (image ou vignette vide), boutons **Télécharger** / **Changer** et **Retirer**. Contraintes à la sélection : **taille maximale 1 Mo**, formats **PNG, JPG, GIF, SVG, WEBP**. Note affichée : « PNG, JPG, SVG. Max 1 Mo. Recommandé : 500x200px, fond transparent. » Le logo est converti en base64 et enregistré dans la configuration ; il est ensuite repris sur vos documents.
+
+**Douze champs texte** (`ENTREPRISE_INFO_FIELDS`) :
+
+| Champ | Exemple affiché |
+|---|---|
+| **Nom de l'entreprise** | Construction ABC Inc. |
+| **Adresse** | |
+| **Ville** | |
+| **Province** | |
+| **Code postal** | H1A 2B3 |
+| **Téléphone** | |
+| **Courriel** | |
+| **Site web** | |
+| **Numéro RBQ** | 5734-1234-01 |
+| **Numéro NEQ** | |
+| **Numéro TPS** | 123456789 RT0001 |
+| **Numéro TVQ** | 1234567890 TQ0001 |
+
+Le bouton **Sauvegarder** ne s'active que s'il y a des changements ; seuls les champs modifiés sont enregistrés (un par un). Message de succès : « Informations sauvegardées ».
+
+**b) Configuration système**
+
+Éditeur avancé des entrées de configuration en clé/valeur, regroupées par catégorie (**General**, **Facturation**, **IA**, **Notifications**). Chaque ligne montre la clé (en style code), un badge de catégorie, une description facultative, un champ texte et un bouton **Sauver** (qui affiche une coche verte 2 secondes après enregistrement). S'il n'y a rien : « Aucune configuration trouvée. Les entrées seront créées automatiquement par le système. »
+
+> **Deux clés protégées** : `document_theme` et `supplier_categories` **ne peuvent pas** être modifiées ici (le serveur refuse avec un message de redirection). Passez plutôt par l'onglet **Apparence** (thème des documents) et par la carte **Catégories de fournisseurs** (onglet Juridiction & Devise).
+
+### 2.5 Onglet « Apparence » (couleurs des documents)
+
+*Réservé aux administrateurs.* Titre **« Apparence des documents »**. Règle les couleurs de tous les **documents HTML** générés : soumissions, factures, bons de commande, bons de travail et courriels envoyés aux clients.
+
+**Six thèmes prédéfinis**, cliquables (une coche marque le thème actif) :
+
+| Thème | Couleur principale |
+|---|---|
+| **Constructo Bleu** (défaut) | `#1F4E79` |
+| **Vert Forêt** | `#166534` |
+| **Rouge Brique** | `#991B1B` |
+| **Anthracite** | `#1F2937` |
+| **Bourgogne** | `#7F1D1D` |
+| **Océan** | `#0C4A6E` |
+
+**Personnalisation avancée — 8 couleurs**, chacune avec un sélecteur de couleur, un champ hexadécimal et une indication d'usage :
+
+| Couleur | Clé technique | Usage |
+|---|---|---|
+| **Couleur principale** | `primary` | Entêtes, bandeau titre, entêtes de tableaux |
+| **Principale — foncée** | `primary_dark` | Variante foncée (survol, bordures importantes) |
+| **Accent** | `accent` | Sous-titres, bordure gauche des encadrés |
+| **Accent — clair** | `accent_light` | Numéro de document sur l'entête |
+| **Texte entête** | `header_text` | Texte sur le fond principal |
+| **Lignes alternées** | `table_row_alt` | Fond des lignes paires de tableau |
+| **Fond sections info** | `info_bg` | Fond des encadrés et des totaux |
+| **Bordures** | `border` | Filets fins (lignes de tableau, séparateurs) |
+
+Chaque champ valide le format hexadécimal (`#RGB` ou `#RRGGBB`) ; une bordure rouge signale une valeur incorrecte. Un **aperçu en direct** montre une maquette de devis (entête, encadrés, tableau, total) qui se met à jour à mesure que vous changez les couleurs.
+
+Actions : **Enregistrer** (actif s'il y a des changements et que toutes les couleurs sont valides), **Annuler les changements**, et le lien **Réinitialiser aux défauts** (avec confirmation).
+
+### 2.6 Onglet « Interface » (couleurs de l'ERP)
+
+*Accessible à tous, réglage par utilisateur.* Titre **« Couleurs de l'interface »**, sous-titre rappelant que « ce choix s'applique à votre compte sur ce navigateur ». Ce réglage est enregistré **localement dans le navigateur** (aucun appel au serveur) et appliqué **immédiatement**.
+
+Un **avertissement de contraste** (non bloquant) apparaît si vos couleurs rendent le texte peu lisible (vérification d'accessibilité WCAG).
+
+**Six thèmes prédéfinis** portant les mêmes noms que pour les documents (Constructo Bleu, Vert Forêt, Rouge Brique, Anthracite, Bourgogne, Océan).
+
+**Quatre couleurs** :
+
+| Couleur | Défaut (thème D365) | Usage |
+|---|---|---|
+| **Couleur principale** | `#0078D4` | Boutons, onglet actif, liens |
+| **Principale — survol** | `#005EA2` | Survol de la couleur principale |
+| **Barre latérale** | `#002050` | Fond de la barre latérale |
+| **Barre supérieure** | `#002B6B` | Fond de la barre du haut |
+
+**Aperçu** : une maquette d'interface (barre latérale, barre du haut, onglet actif, bouton, lien). Actions : **Enregistrer**, **Annuler les changements**, **Réinitialiser aux défauts** (avec confirmation).
+
+> Ce réglage n'est **pas** partagé : il ne suit pas votre compte d'un appareil ou d'un navigateur à l'autre. Sur un nouvel appareil, vous repartez des couleurs par défaut.
+
+### 2.7 Onglet « Juridiction & Devise »
+
+*Réservé aux administrateurs.* Cet onglet empile **cinq cartes de juridiction**, puis la carte **Renseignements employeur (paie)** et la carte **Catégories de fournisseurs**. Chaque carte possède ses propres messages d'erreur et de succès et son propre bouton d'enregistrement.
+
+**Carte 1 — Juridiction & Devise**
+- **Pays** : Canada ou États-Unis.
+- **Devise** : Dollar canadien (CAD) ou Dollar américain (USD).
+- Affiche le code ISO enregistré. Bouton **Enregistrer la juridiction**.
+
+> **Attention** : le changement de **pays** est **refusé** si votre entreprise possède déjà des factures ou des écritures comptables (message « 409 »). Motif : le pays détermine les libellés fiscaux (TPS/TVQ au Canada, Sales Tax aux États-Unis), et il ne faut pas rendre incohérent l'historique déjà produit. Fixez le pays **avant** de commencer à facturer.
+
+**Carte 2 — Taux de retenue par défaut**
+- Champ numérique **Taux de retenue par défaut (%)** (0 à 100, pas de 0,5). Indication : « Standard CA : 10 % (LCS Québec)... ». Bouton **Enregistrer le taux**. Ce taux alimente par défaut les retenues de garantie de la comptabilité et des décomptes.
+
+**Carte 3 — Juridiction (État US / Province CA)**
+- Menu déroulant avec l'option « — Non spécifié — », puis deux groupes : **États américains** (50 + District de Columbia) et **Provinces canadiennes** (13), affichés en toutes lettres. Bouton **Enregistrer la juridiction**.
+
+**Carte 4 — Exercice fiscal**
+- **Mois de début** (menu des 12 mois) et **Jour de début** (le maximum dépend du mois ; le 29 février est accepté par convention récurrente). Un aperçu affiche « Exercice : {{début}} au {{fin}} ». Par défaut, l'exercice suit l'année civile (1er janvier). Bouton **Enregistrer l'exercice fiscal**.
+
+**Carte 5 — Note importante** : quatre rappels (le pays touche le plan comptable ; les taxes se règlent à part dans l'onglet Taxes ; la devise ; ces valeurs s'appliquent à toute l'entreprise).
+
+**Carte « Renseignements employeur (paie) »** — prérequis pour produire les feuillets de fin d'année T4 et RL-1. Neuf champs, **tous facultatifs** :
+
+| Champ | Exemple |
+|---|---|
+| **Numéro d'employeur ARC (paie)** | 123456789RP0001 |
+| **Numéro d'identification Revenu Québec** | 1234567890RS0001 |
+| **Numéro CNESST** | |
+| **Classification CNESST** | |
+| **Numéro CCQ** | Si assujetti à la CCQ |
+| **Adresse** (légale de l'employeur) | |
+| **Ville** | |
+| **Code postal** | H2X 1Y4 |
+| **Province** | QC (2 lettres) |
+
+Boutons **Enregistrer** / **Annuler les modifications**. *La lecture de cette carte est aussi ouverte au rôle **comptable**.*
+
+**Carte « Catégories de fournisseurs »** — liste des catégories proposées au champ « Secteur d'activité » quand vous créez un fournisseur (pour classer vos dépenses). Un champ + bouton **Ajouter** (les doublons, majuscules ou minuscules confondues, sont ignorés), une liste modifiable en ligne avec suppression (icône `Trash2`), un compteur « {{n}} catégorie(s) », puis **Enregistrer** / **Réinitialiser aux valeurs par défaut**. Une liste de 30 catégories est fournie par défaut.
+
+### 2.8 Onglet « Taxes »
+
+*Réservé aux administrateurs.* Titre **« Configuration des taxes »**. Par défaut au Québec : TPS 5 % et TVQ 9,975 %. **Un libellé vide ou un taux à 0 masque la taxe** ; les documents déjà produits conservent leurs taxes historiques.
+
+Quatre champs :
+
+| Champ | Détail |
+|---|---|
+| **Taxe 1 — Libellé** | Exemple : « TPS / GST / Sales Tax (vide pour masquer) ». Maximum 50 caractères. |
+| **Taxe 1 — Taux (%)** | Nombre de 0 à 100 (pas de 0,001). |
+| **Taxe 2 — Libellé** | Exemple : « TVQ / PST... ». |
+| **Taxe 2 — Taux (%)** | Nombre de 0 à 100. |
+
+Les taux sont bornés à l'intervalle 0-100 et arrondis à 3 décimales. Bouton **Sauvegarder** (actif s'il y a des changements).
+
+Carte **« Exemples de configurations »** — un tableau de référence :
+
+| Juridiction | Taxe 1 | Taxe 2 |
+|---|---|---|
+| Québec | TPS 5 % | TVQ 9,975 % |
+| Ontario | HST 13 % | — |
+| Colombie-Britannique | GST 5 % | PST 7 % |
+| Alberta | GST 5 % | — |
+| USA (ex. Californie) | Sales Tax 8,25 % | — |
+| Exonéré | — | — |
+
+### 2.9 Onglet « Préférences » (langue des documents)
+
+*Réservé aux administrateurs.* Titre **« Langue des documents générés »**. Deux boutons radio présentés en cartes :
+
+- **Français** — « Par défaut pour le Québec... Format devise : 1 234,56 $ ».
+- **Anglais** — « Recommandé pour les États-Unis... Format devise : $1,234.56 ».
+
+Bouton **Sauvegarder** (actif au changement). Carte **« Note importante »** avec trois rappels : les documents historiques sont régénérés à la volée dans la nouvelle langue ; les libellés de taxes restent indépendants ; les textes que vous avez personnalisés ne sont pas traduits automatiquement.
+
+### 2.10 Onglet « Fuseau horaire »
+
+*Réservé aux administrateurs.* Titre **« Fuseau horaire du tenant »**. Sert à l'horodatage du **pointage**, des **dates de création**, des **échéances** et des **rapports**.
+
+Menu déroulant de **13 fuseaux** (zones IANA), avec la valeur enregistrée affichée en dessous :
+
+| Groupe | Fuseaux |
+|---|---|
+| **Canada** (6) | Toronto/Montréal, Halifax, St. John's, Winnipeg, Edmonton, Vancouver |
+| **États-Unis** (6) | New York, Chicago, Denver, Phoenix (sans heure d'été), Los Angeles, Anchorage |
+| **Pacifique** (1) | Honolulu |
+
+Bouton **Sauvegarder** (actif au changement). Carte **« Note importante »** : les dates sont stockées en temps universel (UTC) en base ; l'effet est immédiat ; rappels particuliers pour Phoenix et la Saskatchewan (pas d'heure avancée).
+
+### 2.11 Onglet « Abonnement »
+
+*Accessible à tous.* Piloté par Stripe. Deux cartes.
+
+**Carte « Abonnement »** (bouton **Rafraîchir**). Si un abonnement existe, trois tuiles :
+
+| Tuile | Contenu |
+|---|---|
+| **Statut** | Badge coloré ; mention « Sera annulé le {{date}} » si une annulation est programmée. |
+| **Plan** | Nom du plan + « {{montant}} $ / mois » ou « / an ». |
+| **Renouvellement** | Date ; mention « Fin de l'essai : {{date}} » si vous êtes en période d'essai. |
+
+Boutons : **Gérer mon abonnement** (ouvre le **portail client Stripe** : carte, factures, changement de plan), **Annuler** (si l'abonnement est actif et pas déjà en annulation). S'il n'y a **aucun** abonnement : « Aucun abonnement actif » + « Souscrivez à un plan... » + bouton **Souscrire maintenant** (paiement Stripe du plan `pro`).
+
+**Carte « Crédits IA »** — trois tuiles :
+
+| Tuile | Contenu |
+|---|---|
+| **Solde actuel** | Montant en $, ou **« Illimité »** (en vert) si votre plan est exempté. |
+| **Utilisation ce mois** | Montant consommé. |
+| **Type de plan** | Nom du plan ; badge « Crédits illimités » si exempté. |
+
+Si vous n'êtes pas exempté, des avertissements apparaissent : **« Solde bas... »** (sous 2 $) et **« Crédits IA épuisés... »** (à 0 ou moins), avec un bouton **Recharger**.
+
+**Fenêtre d'annulation** — titre « Annuler l'abonnement », encadré « Attention », message « ...restera actif jusqu'à la fin de la période ({{date}})... », boutons **Conserver** / **Confirmer l'annulation**. L'annulation prend effet à la **fin de la période en cours** (vous gardez l'accès jusque-là).
+
+**Fenêtre de recharge** — titre « Recharger les crédits IA », six montants rapides (**10 / 25 / 50 / 100 / 200 / 500 $**), un champ « Montant personnalisé ($) » (indication « Min. 5,00 »), un bouton **Recharger {{montant}} $**. Montant accepté : **entre 5 $ et 500 $**.
+
+> **La recharge est un vrai paiement.** Elle débite immédiatement la carte enregistrée dans votre compte Stripe (devise par défaut : dollar canadien). Le système **facture d'abord, puis crédite** de façon idempotente (jamais de double-crédit). Si la carte est refusée, un message clair s'affiche (erreur « 402 ») et **aucun crédit n'est ajouté**.
+
+**Statuts d'abonnement possibles** : Actif, Essai gratuit, Paiement en retard, Annulé, Annulation en cours, Incomplet, Expiré, Impayé.
+
+### 2.12 Onglet « Intégrations »
+
+*Accessible à tous.* Cet onglet **embarque un module séparé** (chargé à la demande) : la gestion des intégrations comptables. Il possède ses **sept propres sous-onglets** :
+
+| Sous-onglet | Rôle |
+|---|---|
+| **Vue d'ensemble** | État des connexions. |
+| **QuickBooks** | Connexion OAuth à QuickBooks Online + synchronisations. |
+| **Sage 50** | Connexion au connecteur Sage 50. |
+| **Sage** | Sage Business Cloud Accounting (REST/OAuth). |
+| **Webhooks** | Points d'ancrage sortants **du module Intégrations** (c'est **ici** que se trouvent les webhooks visibles). |
+| **Correspondances** | Mappage des comptes entre l'ERP et le logiciel comptable. |
+| **Historique** | Journaux des synchronisations. |
+
+> Le détail de ces sous-onglets relève du **manuel des Intégrations**. Retenez seulement que la Configuration ne fait que **loger** cette page ; elle n'ajoute aucun réglage propre.
 
 ---
 
-## 4. Page `/conformite` (RBQ / CCQ / CNESST)
+## 3. Procédures pas à pas
 
-> Module dedie a la conformite Quebec construction. Accessible aux utilisateurs authentifies du tenant.
+### 3.1 Modifier son nom ou son courriel
 
-### 4.1 3 sections principales
+1. **Configuration** → onglet **Profil**.
+2. Dans « Informations personnelles », modifiez **Nom complet** et/ou **Courriel**.
+3. Cliquez **Enregistrer**. Bannière verte de confirmation.
 
-| Section          | Concerne          | Table                  | Statuts                                       |
-|------------------|-------------------|------------------------|-----------------------------------------------|
-| **Licences RBQ** | Entreprise        | `licences_rbq`         | `VALID` / `EXPIRED` / `PENDING` / `SUSPENDED` |
-| **Cartes CCQ**   | Employes          | `cartes_ccq`           | `ACTIF` / `EXPIRE` / `SUSPENDU` / `REVOQUE`   |
-| **Attestations** | Entreprise        | `attestations_fiscales`| `VALIDE` / `EXPIRE` / `MANQUANTE`             |
+### 3.2 Changer son propre mot de passe
 
-### 4.2 Licences RBQ
+1. Onglet **Profil** → carte « Changer le mot de passe ».
+2. Saisissez le **Nouveau mot de passe** (au moins 6 caractères) puis **Confirmer**.
+3. Cliquez **Modifier le mot de passe**.
 
-**26 categories** (TRAVAUX_GENERAUX, MACON, ELECTRICIEN, PLOMBIER, COUVREUR, etc.).
+### 3.3 Créer un compte pour un employé
 
-Endpoints :
-- `GET /conformite/licences` (filtre statut)
-- `GET /conformite/licences/expiring` (30/60 jours)
-- `POST /conformite/licences` (numero, categorie, date_emission, date_expiration, statut, note)
-- `PUT /conformite/licences/{id}`
-- `DELETE /conformite/licences/{id}`
+1. Onglet **Utilisateurs** (administrateur) → bouton **Nouvel utilisateur**.
+2. Saisissez le **Nom d'utilisateur** (unique) et un **Mot de passe** (6 caractères minimum) — les deux sont obligatoires.
+3. Complétez le **Nom complet** et le **Courriel** (facultatifs).
+4. Choisissez un **Rôle** ; cochez **Administrateur** si la personne doit avoir les pleins droits.
+5. Cliquez **Créer**. Le compte apparaît dans la liste, à l'état **Actif**.
 
-### 4.3 Cartes CCQ
+### 3.4 Modifier le rôle ou les droits d'un utilisateur
 
-**28 metiers** avec qualifications dynamiques (`metier` enum + `qualifications[]` array).
+1. Onglet **Utilisateurs** → icône **Modifier** sur la ligne voulue.
+2. Ajustez le **Rôle** et/ou la case **Administrateur**.
+3. Cliquez **Enregistrer**.
 
-Endpoints CRUD similaires : `GET POST PUT DELETE /conformite/cartes`.
+> Si vous tentez de retirer le statut d'administrateur au **dernier** administrateur, l'opération est refusée : ajoutez d'abord un autre administrateur.
 
-Notifications : `GET /conformite/cartes/expiring?days=30` ou `60`.
+### 3.5 Réinitialiser le mot de passe d'un employé
 
-### 4.4 Attestations (CNESST / fiscales)
+1. Onglet **Utilisateurs** → icône **Changer le mot de passe** sur la ligne.
+2. Saisissez et confirmez le nouveau mot de passe (6 caractères minimum).
+3. Cliquez **Modifier**. Communiquez ensuite le mot de passe à l'employé de façon sécuritaire.
 
-**5 types** :
-- `CSST` (legacy)
-- `CNESST` (sante securite)
-- `RBQ` (attestation Revenu Quebec liee a la licence)
-- `CCQ` (attestation conformite cotisations)
-- `AUTRES`
+### 3.6 Désactiver un utilisateur qui quitte l'entreprise
 
-Upload de documents (PDF, JPEG, PNG, WEBP, **max 10 MB**) :
-- `POST /conformite/attestations/{id}/upload` (multipart)
-- `GET /conformite/attestations/{id}/download` (Content-Disposition: attachment)
+1. Onglet **Utilisateurs** → icône **Désactiver** sur la ligne (absente sur votre propre ligne).
+2. Confirmez « Désactiver l'utilisateur {{nom}} ? ».
+3. Le compte passe **Inactif** ; il ne peut plus se connecter, mais son historique reste intact.
 
-### 4.5 Statistiques & alertes
+> Le dernier administrateur actif ne peut pas être désactivé. Il n'existe pas de suppression définitive : la désactivation est réversible (réactivez en modifiant le compte).
 
-- `GET /conformite/statistics` -> score conformite global + counts par statut + risk distribution
-- `GET /conformite/alertes` -> notifications expirations 30/60 jours
-- `GET /conformite/constants` -> donnees statiques (metiers, statuts, niveaux risque)
-- `GET /conformite/resources` -> 8 organismes + 6 conseils pratiques
+### 3.7 Téléverser le logo et saisir les coordonnées
 
-### 4.6 7 endpoints IA Conformite (Claude Opus 4.7)
+1. Onglet **Entreprise** → sous-onglet **Informations entreprise** (administrateur).
+2. Cliquez **Télécharger** (ou **Changer**) et choisissez une image **PNG/JPG/GIF/SVG/WEBP** de **1 Mo au maximum** (idéalement 500 x 200 px, fond transparent).
+3. Remplissez les 12 champs (nom, adresse, téléphone, RBQ, NEQ, TPS, TVQ, etc.).
+4. Cliquez **Sauvegarder**. Ces renseignements apparaîtront sur vos soumissions, factures et bons.
 
-> **Modele** : `claude-opus-4-7` (le plus performant pour analyse complexe). **Cout sup.** (CONF_PRICING : input $0.015/1K, output $0.075/1K, markup 30%).
+### 3.8 Personnaliser les couleurs des documents
 
-| Endpoint                                       | Role                                          |
-|------------------------------------------------|-----------------------------------------------|
-| `POST /conformite/ai/analyze`                  | Analyser profil conformite global             |
-| `POST /conformite/ai/chat`                     | Chat conversationnel sur la conformite        |
-| `POST /conformite/ai/verify-project`           | Verifier conformite d un projet specifique    |
-| `POST /conformite/ai/search-regulations`       | Rechercher dans les reglementations Quebec    |
-| `POST /conformite/ai/predict-renewals`         | Predire les renouvellements basee sur historique |
-| `POST /conformite/ai/generate-rapport`         | Generer rapport conformite PDF                |
-| `POST /conformite/ai/recommend-formations`     | Recommander programmes formation              |
+1. Onglet **Apparence** (administrateur).
+2. Cliquez un **thème prédéfini**, ou ajustez les **8 couleurs** à la main (sélecteur ou code hexadécimal).
+3. Vérifiez le rendu dans l'**aperçu en direct**.
+4. Cliquez **Enregistrer**. Pour revenir au thème d'origine, utilisez **Réinitialiser aux défauts**.
 
-> Tous deduisent des credits IA (`_check_credits` + `_deduct_credits`).
+### 3.9 Personnaliser les couleurs de l'interface
 
----
+1. Onglet **Interface** (chacun pour soi).
+2. Choisissez un thème ou ajustez les **4 couleurs**. Tenez compte de l'avertissement de contraste s'il apparaît.
+3. Cliquez **Enregistrer**. Le changement est immédiat et **propre à ce navigateur**.
 
-## 5. Page `/integration` (QuickBooks / Sage 50 / Webhooks)
+### 3.10 Configurer pays, devise et taxes (à faire en premier)
 
-### 5.1 6 onglets IntegrationPage
+1. Onglet **Juridiction & Devise** → carte 1 : choisissez **Pays** et **Devise**, puis **Enregistrer la juridiction**.
+2. Onglet **Taxes** : saisissez le **libellé** et le **taux** de chaque taxe (par exemple TPS 5 % et TVQ 9,975 %), puis **Sauvegarder**. Laissez un libellé vide pour masquer une taxe.
+3. Faites-le **avant** d'émettre vos premières factures : le pays ne pourra plus changer par la suite.
 
-1. **Vue d ensemble** : statut connexions
-2. **QuickBooks** : OAuth2 setup + sync triggers
-3. **Sage 50** : config connexion
-4. **Webhooks** : gestion endpoints
-5. **Correspondance** : mappings champs
-6. **Historique** : logs sync
+### 3.11 Régler le taux de retenue de garantie
 
-### 5.2 QuickBooks Online
+1. Onglet **Juridiction & Devise** → carte 2.
+2. Saisissez le **Taux de retenue par défaut (%)** (10 % est le standard au Québec).
+3. Cliquez **Enregistrer le taux**.
 
-Workflow OAuth2 :
-1. **Connecter** : `GET /integrations/quickbooks/auth-url` -> redirection OAuth Intuit
-2. Apres autorisation : Intuit redirige vers `POST /integrations/quickbooks/callback` (code + realmId + state)
-3. Backend stocke tokens dans `integrations` table
-4. **Sync** : `POST /integrations/{id}/sync` avec direction `to_qb` ou `from_qb`
-5. **Test** : `POST /integrations/{id}/test`
+### 3.12 Définir l'exercice fiscal
 
-**Mappings supportes** : Account, Class, Customer, Invoice, Bill, JournalEntry, Deposit.
+1. Onglet **Juridiction & Devise** → carte 4.
+2. Choisissez le **Mois de début** et le **Jour de début** ; vérifiez l'aperçu « Exercice : ... au ... ».
+3. Cliquez **Enregistrer l'exercice fiscal**.
 
-### 5.3 Sage 50
+### 3.13 Saisir les renseignements employeur (préparation des feuillets)
 
-Configuration connecteur (sans OAuth — credentials API directs).
+1. Onglet **Juridiction & Devise** → carte **Renseignements employeur (paie)**.
+2. Renseignez les numéros connus (ARC, Revenu Québec, CNESST, CCQ) et l'adresse légale. Tout est facultatif et peut être complété plus tard.
+3. Cliquez **Enregistrer**. Ces données servent à produire les T4 et RL-1 (module Pointage et Paie).
 
-**Mappings** : GL Code, Customer, Invoice, Bill, Payment, Deposit.
+### 3.14 Gérer les catégories de fournisseurs
 
-### 5.4 Webhooks
+1. Onglet **Juridiction & Devise** → carte **Catégories de fournisseurs**.
+2. Saisissez une catégorie et cliquez **Ajouter** (les doublons sont ignorés) ; supprimez celles dont vous n'avez pas besoin.
+3. Cliquez **Enregistrer**. Pour repartir de zéro, **Réinitialiser aux valeurs par défaut**.
 
-Pour notifications evenements vers systemes tiers.
+### 3.15 Choisir la langue des documents
 
-Endpoints :
-- `GET /config/webhooks` -> liste
-- `POST /config/webhooks` -> creer (url + events[] + secret auto-genere si non fourni 32 bytes URL-safe)
-- `PUT /config/webhooks/{id}`
-- `DELETE /config/webhooks/{id}`
-- `POST /config/webhooks/{id}/test` -> envoie test.ping payload
-- `GET /config/webhooks/{id}/deliveries` -> historique livraisons (limit 100)
+1. Onglet **Préférences** (administrateur).
+2. Sélectionnez **Français** ou **Anglais**.
+3. Cliquez **Sauvegarder**. Les documents seront désormais générés dans cette langue.
 
-**Events** typiques : `invoice.created`, `payment.received`, `bt.completed`, `project.statut_changed`, etc.
+### 3.16 Régler le fuseau horaire
 
-**Securite** : signature HMAC avec `secret` (header `X-Webhook-Signature`).
+1. Onglet **Fuseau horaire** (administrateur).
+2. Choisissez la zone (par exemple « Toronto/Montréal »).
+3. Cliquez **Sauvegarder**. L'effet est immédiat sur les horodatages.
 
-### 5.5 Historique sync
+### 3.17 Souscrire à un abonnement
 
-- `GET /integrations/sync-history` -> logs
-- `GET /integrations/sync-stats` -> stats agregees
+1. Onglet **Abonnement**. S'il n'y a pas d'abonnement actif, cliquez **Souscrire maintenant**.
+2. Vous êtes redirigé vers la page de paiement **Stripe** ; réglez le plan.
+3. Au retour, l'ERP rouvre l'onglet **Abonnement** ; cliquez **Rafraîchir** au besoin pour voir le statut à jour.
 
----
+### 3.18 Gérer ou annuler l'abonnement
 
-## 6. Modules complementaires
+1. Onglet **Abonnement** → **Gérer mon abonnement** pour ouvrir le **portail Stripe** (changer de carte, télécharger les factures, changer de plan).
+2. Pour arrêter : bouton **Annuler** → **Confirmer l'annulation**. L'accès reste actif jusqu'à la **fin de la période** déjà payée, puis l'entreprise passe en **mode consultation**.
 
-### 6.1 Subventions (`/subventions`)
+### 3.19 Recharger les crédits IA
 
-Module aide aux subventions gouvernementales (Hydro-Quebec, Energie Cardio, programmes RBQ, etc.) :
-- `GET /subventions/constants` / `categories` / `programmes`
-- `GET /subventions/demandes` / `POST` / `PUT`
-- `POST /subventions/demandes/{id}/soumettre` -> soumission a l organisme
-- 5 endpoints IA : suggest / chat / checklist / analyze-demande / analyze-eligibility
+1. Onglet **Abonnement** → carte **Crédits IA** → **Recharger**.
+2. Choisissez un montant rapide (10 à 500 $) ou saisissez un **montant personnalisé** (entre 5 $ et 500 $).
+3. Cliquez **Recharger {{montant}} $**. La carte enregistrée est débitée, puis le solde est crédité. En cas de refus de carte, aucun crédit n'est ajouté.
 
-### 6.2 Calculateurs (`/calculators`)
+### 3.20 Brancher un logiciel comptable
 
-Calculateurs techniques par metier construction :
-- **Beton** : dosage, armatures, cure, coffrage, excavation, talus, escaliers
-- **Electricite** : residentiel, eclairage, mise a la terre
-- **Toiture** : ventilation, gouttieres, charge neige
-- **Peinture** : DFT, point de rosee
-- **Plomberie** : Hazen-Williams, chauffe-eau, pente drain
-- **CVAC** : conduit, CFM, VRC
-
-> Multiples endpoints, chacun avec parametres metier specifiques.
-
-### 6.3 Fonds Prevoyance Loi 16 (`/fonds-prevoyance`)
-
-Module obligatoire pour copropriete au Quebec (Loi 16) :
-- `GET /fonds-prevoyance/reference` -> regles Loi 16
-- CRUD : Coproprietes, Composantes (elements batiment), Etudes (etudes du fonds), Entretiens, Attestations
-- `GET /fonds-prevoyance/coproprietes/{id}/statistiques`
-- `POST /fonds-prevoyance/ia/analyze-copropriete` (IA Claude analyse)
-- `POST /fonds-prevoyance/ia/suggest-contribution`
-- `POST /fonds-prevoyance/calculer-valeur-reconstruction`
-
-> Sous-onglet integre dans Module 19 Immobilier (`fonds_prevoyance` tab).
+1. Onglet **Intégrations** → sous-onglet **QuickBooks** (ou **Sage 50** / **Sage**).
+2. Lancez la connexion (OAuth pour QuickBooks et Sage Business Cloud) et suivez les correspondances de comptes.
+3. Consultez l'**Historique** pour vérifier les synchronisations. (Détails dans le manuel des Intégrations.)
 
 ---
 
-## 7. Workflows pas-a-pas
+## 4. Référence
 
-### 7.1 (Super-admin) Activer/desactiver un tenant
+### 4.1 Points d'accès de la Configuration (`/api/erp/v1/config`)
 
-1. `/admin` -> onglet **Entreprises** -> ligne tenant -> toggle **active**.
-2. `PUT /admin/entreprises/{id}/toggle`.
-3. Tenant inactive : ses utilisateurs ne peuvent plus se connecter (HTTP 403 a `tenant-login`).
+Sauf mention contraire, la **lecture** (GET) est ouverte à tout utilisateur du tenant et l'**écriture** exige le droit d'administrateur (`require_tenant_admin_or_role`).
 
-### 7.2 (Super-admin) Reparer le schema d un tenant
+| Méthode | URL | Rôle | Objet |
+|---|---|---|---|
+| GET | `/config/profile` | Soi-même | Lire son profil |
+| PUT | `/config/profile` | Soi-même | Modifier nom / courriel |
+| GET | `/config/users` | Admin | Liste des utilisateurs |
+| POST | `/config/users` | Admin | Créer un utilisateur |
+| PUT | `/config/users/{id}` | Admin | Modifier (rôle, droits, courriel) |
+| PUT | `/config/users/{id}/password` | Soi-même **ou** admin | Changer un mot de passe |
+| DELETE | `/config/users/{id}` | Admin | Désactiver (suppression douce) |
+| GET | `/config/entreprise` | Tous | Lire la configuration |
+| PUT | `/config/entreprise/{cle}` | Admin | Écrire une clé (logo, coordonnées, clés libres) |
+| GET / PUT / DELETE | `/config/document-theme` | GET tous / écriture admin | Thème des documents |
+| GET / PUT | `/config/tax-config` | GET tous / PUT admin | Taxes de vente |
+| GET / PUT | `/config/document-language` | GET tous / PUT admin | Langue (fr/en) |
+| GET / PUT | `/config/timezone` | GET tous / PUT admin | Fuseau horaire |
+| GET / PUT | `/config/country` | GET tous / PUT admin | Pays (CA/US) |
+| GET / PUT | `/config/currency` | GET tous / PUT admin | Devise (CAD/USD) |
+| GET / PUT | `/config/retainage` | GET tous / PUT admin | Taux de retenue |
+| GET / PUT | `/config/fiscal-year` | GET tous / PUT admin | Exercice fiscal |
+| GET / PUT | `/config/juridiction` | GET tous / PUT admin | État US / province CA |
+| GET / PUT | `/config/supplier-categories` | GET tous / PUT admin | Catégories de fournisseurs |
+| GET / PUT | `/config/employer-payroll` | GET admin **ou comptable** / PUT admin | Renseignements employeur |
+| GET POST PUT DELETE | `/config/webhooks[...]` | Admin | Points d'ancrage sortants — **sans interface** (voir 5.4) |
 
-1. `/admin` -> Entreprises -> selectionner tenant -> bouton **Audit schema**.
-2. `GET /admin/tenants/{slug}/audit` -> retourne diff vs reference (tables/views/columns manquantes).
-3. Si diff non vide : bouton **Repair**.
-4. `POST /admin/tenants/{slug}/repair` -> applique les ALTER/CREATE manquants (idempotent).
-5. Pour tous les tenants en bulk : bouton **Repair all known fixes** -> `POST /admin/tenants/repair-all-known-fixes`.
+### 4.2 Points d'accès de l'abonnement (`/api/erp/v1/stripe`)
 
-### 7.3 (Super-admin) Reset password tenant
+Tous exigent seulement une session authentifiée (l'entreprise est résolue depuis votre compte).
 
-1. Tenant identifie -> bouton **Reset password**.
-2. Choisir : reset entreprise login OR reset un user specifique.
-3. `POST /admin/tenants/{slug}/reset-passwords` avec `{type: entreprise|user, target_email, new_password}`.
-4. Backend hash bcrypt + UPDATE.
+| Méthode | URL | Objet |
+|---|---|---|
+| POST | `/stripe/checkout` | Créer une session de paiement d'abonnement |
+| GET | `/stripe/subscription` | Détails de l'abonnement (source Stripe) |
+| POST | `/stripe/portal` | Ouvrir le portail client Stripe |
+| POST | `/stripe/cancel` | Programmer l'annulation en fin de période |
+| GET | `/stripe/credits` | Solde de crédits IA + usage du mois |
+| POST | `/stripe/credits/recharge` | Recharger (paiement réel, 5-500 $) |
 
-### 7.4 (Super-admin) Diffuser un message
+### 4.3 Statuts d'abonnement
 
-1. `/admin` -> onglet **Mises a jour** -> formulaire.
-2. Saisir message + type (info/warning/success).
-3. **Activer** -> `POST /admin/updates`.
-4. Tous les tenants voient le banner sur leur ouverture de page (a verifier en prod).
+| Statut | Signification | Accès à l'ERP |
+|---|---|---|
+| **Actif** | Abonnement payé et en règle | Complet |
+| **Essai gratuit** | Période d'essai en cours | Complet |
+| **Paiement en retard** | Échec de prélèvement, période de grâce | Complet (à régulariser) |
+| **Annulation en cours** | Annulation programmée en fin de période | Complet jusqu'à la date |
+| **Annulé** | Abonnement terminé | **Mode consultation** |
+| **Incomplet** | Paiement initial non finalisé | **Mode consultation** |
+| **Expiré** / **Impayé** | Fin d'accès | **Mode consultation** |
 
-### 7.5 (Super-admin) Assigner un representant
+### 4.4 Limites et validations
 
-1. `/admin` -> onglet **Representants** -> creer/modifier.
-2. Onglet Entreprises -> selectionner tenant -> dropdown **Representant**.
-3. `PUT /admin/entreprises/{id}/representant?representant_nom=X`.
-4. Commission 40% s applique au prochain calcul P&L (sauf si owner).
+| Règle | Valeur / effet |
+|---|---|
+| Mot de passe | **6 caractères minimum** (création et changement) |
+| Nom d'utilisateur | Unique dans l'entreprise (sinon refus) ; **non modifiable** après création |
+| Dernier administrateur | Ne peut être **ni** rétrogradé **ni** désactivé |
+| Auto-désactivation | Interdite (vous ne pouvez pas désactiver votre propre compte) |
+| Rôle « super-administrateur » | Refusé à la création/modification (message 422) |
+| Logo | **1 Mo maximum** ; PNG, JPG, GIF, SVG, WEBP |
+| Couleur de thème | Format hexadécimal `#RGB` ou `#RRGGBB` |
+| Taux de taxe | 0 à 100, arrondi à 3 décimales ; libellé ≤ 50 caractères |
+| Taux de retenue | 0 à 100 % |
+| Exercice fiscal | Mois 1-12, jour valide selon le mois (29 février toléré) |
+| Pays | CA ou US ; **changement refusé** si factures/écritures existent |
+| Devise | CAD ou USD |
+| Fuseau horaire | Parmi les 13 zones autorisées |
+| Catégories de fournisseurs | 80 caractères par entrée, 200 entrées au maximum |
+| Recharge de crédits | **5 $ à 500 $** ; paiement réel, idempotent |
+| Langue | `fr` ou `en` |
 
-### 7.6 (Tenant admin) Creer un utilisateur
+### 4.5 Les 8 couleurs des documents (onglet Apparence)
 
-1. `/configuration` -> onglet **Utilisateurs** -> bouton **+ Nouvel utilisateur**.
-2. Modale :
-   - **Username** (unique dans le tenant)
-   - **Password** (min 6 chars)
-   - **Email**, **Full name**
-   - **Role** (admin/user/employee/comptable/gestionnaire)
-   - **Is admin** (boolean — superpose au role)
-   - **Employee ID** (optionnel — lie a la fiche employe Module 9)
-3. **Enregistrer** -> `POST /config/users`.
-4. Active = TRUE par defaut.
+Valeurs par défaut = thème **Constructo Bleu** (source `html_utils.py`).
 
-### 7.7 (Tenant admin) Personnaliser le theme documents
+| Clé | Défaut | Rôle |
+|---|---|---|
+| `primary` | `#1F4E79` | Entêtes, bandeau titre, entêtes de tableaux |
+| `primary_dark` | `#163A5C` | Variante foncée |
+| `accent` | `#2563EB` | Sous-titres, bordure des encadrés |
+| `accent_light` | `#93C5FD` | Numéro de document sur l'entête |
+| `header_text` | `#FFFFFF` | Texte sur fond principal |
+| `table_row_alt` | `#F8F9FA` | Alternance des lignes de tableau |
+| `info_bg` | `#F8FAFC` | Fond des encadrés et totaux |
+| `border` | `#E9ECEF` | Filets fins |
 
-1. `/configuration` -> onglet **Apparence**.
-2. 8 color pickers + apercu en temps reel (ThemePreview).
-3. **Enregistrer** -> `PUT /config/document-theme`.
-4. Validation hex (`#RGB` ou `#RRGGBB`).
-5. Race-safe : SELECT FOR UPDATE pendant l update.
-6. Bouton **Reset** -> revient aux defaults `#1F4E79` etc.
+### 4.6 Les 4 couleurs de l'interface (onglet Interface)
 
-### 7.8 (Tenant admin) Configurer les conditions de paiement par defaut
+Valeurs par défaut = thème **D365** (source `useUiThemeStore.ts`), enregistrées dans le navigateur.
 
-1. `/configuration` -> onglet **Soumissions**.
-2. Modifier le texte « Conditions de paiement » qui apparaitra sur tous les nouveaux devis et factures.
-3. `PUT /config/entreprise/conditions_paiement_defaut`.
+| Couleur | Défaut | Rôle |
+|---|---|---|
+| Couleur principale | `#0078D4` | Boutons, onglet actif, liens |
+| Principale — survol | `#005EA2` | Survol |
+| Barre latérale | `#002050` | Fond de la barre latérale |
+| Barre supérieure | `#002B6B` | Fond de la barre du haut |
 
-### 7.9 (Tenant admin) Connecter QuickBooks
+### 4.7 Comportements défensifs du serveur (bon à savoir)
 
-1. `/integration` -> onglet **QuickBooks** -> bouton **Connecter QuickBooks**.
-2. Backend : `GET /integrations/quickbooks/auth-url` -> redirect vers Intuit OAuth.
-3. Authoriser sur Intuit -> retour a l ERP avec code + realmId.
-4. `POST /integrations/quickbooks/callback` -> stocke tokens + refresh_token.
-5. **Tester** -> `POST /integrations/{id}/test` -> verifie acces realm.
-6. **Synchroniser** -> `POST /integrations/{id}/sync` direction `to_qb` ou `from_qb`.
-
-### 7.10 (Tenant) Ajouter une licence RBQ
-
-1. `/conformite` -> section **Licences RBQ** -> bouton **+ Nouvelle licence**.
-2. Modale :
-   - **Numero RBQ** (format `XXXX-XXXX-XX`)
-   - **Categorie** (dropdown 26 valeurs : TRAVAUX_GENERAUX, MACON, etc.)
-   - **Date emission**, **Date expiration**
-   - **Statut** (`VALID` / `EXPIRED` / `PENDING` / `SUSPENDED`)
-   - **Note**
-3. **Enregistrer** -> `POST /conformite/licences`.
-4. Notifications expiration auto a 60j puis 30j (`GET /conformite/licences/expiring`).
-
-### 7.11 (Tenant) Ajouter une carte CCQ employe
-
-1. `/conformite` -> section **Cartes CCQ** -> bouton **+ Nouvelle carte**.
-2. Modale :
-   - **Numero carte CCQ** (format CCQ)
-   - **Nom employe** (dropdown lie aux employes du Module 9)
-   - **Metier** (dropdown 28 valeurs : CHARPENTIER-MENUISIER, ELECTRICIEN, PLOMBIER, etc.)
-   - **Qualifications** (multi-select selon metier — ex. `Apprenti`, `Compagnon`, `Maitre`)
-   - **Dates emission/expiration**
-   - **Statut** (`ACTIF` / `EXPIRE` / `SUSPENDU` / `REVOQUE`)
-3. `POST /conformite/cartes`.
-
-### 7.12 (Tenant) Uploader une attestation CNESST
-
-1. `/conformite` -> section **Attestations** -> bouton **+ Nouvelle attestation**.
-2. Saisir numero + dates + statut.
-3. `POST /conformite/attestations`.
-4. Sur la fiche creee : bouton **Uploader document** -> selectionner fichier (PDF/JPEG/PNG/WEBP, max 10 MB).
-5. `POST /conformite/attestations/{id}/upload` (multipart).
-6. Telechargeable via `GET /conformite/attestations/{id}/download`.
-
-### 7.13 (Tenant) Utiliser l IA Conformite
-
-1. `/conformite` -> selectionner action IA :
-   - **Analyser profil** : `POST /conformite/ai/analyze`
-   - **Chat conformite** : `POST /conformite/ai/chat`
-   - **Verifier projet** : `POST /conformite/ai/verify-project?project_id=X`
-   - **Rechercher reglementations** : `POST /conformite/ai/search-regulations` (texte requete)
-   - **Predire renouvellements** : `POST /conformite/ai/predict-renewals`
-   - **Generer rapport** : `POST /conformite/ai/generate-rapport` (PDF)
-   - **Recommander formations** : `POST /conformite/ai/recommend-formations`
-2. Tous : verification credits IA (`_check_credits`) puis `_deduct_credits` apres reponse.
-
-### 7.14 Inscription nouvelle entreprise (signup public)
-
-1. Page `/register` -> formulaire :
-   - **Nom entreprise**, **Slug** (auto-genere depuis nom)
-   - **Email contact**, **Password** (min 6 chars)
-   - **Telephone**, **Adresse**
-   - **Representant** (dropdown public `GET /auth/representants`)
-2. **S inscrire** -> `POST /auth/register`.
-3. Backend :
-   - Valide email unique.
-   - Cree Stripe Checkout session.
-   - Insert dans `pending_signups` (avec flag `awaiting_payment`).
-4. Redirection vers Stripe Checkout (carte).
-5. Apres paiement : webhook Stripe declenche creation tenant + schema PostgreSQL + email confirmation.
+- **Lecture toujours tolérante** : les GET de configuration ne plantent jamais ; ils renvoient des valeurs par défaut en cas de souci.
+- **Colonne non encore migrée** : certains réglages (taxes, langue, fuseau, pays, devise, retenue, juridiction) peuvent répondre « 503 » avec le nom du script de migration si la base n'a pas encore la colonne. L'exercice fiscal et les renseignements employeur, eux, **se réparent tout seuls** (création automatique de la colonne ou de la table).
+- **Écritures concurrentes** : les modifications de la configuration en JSON sont sérialisées (verrou), pour qu'un enregistrement n'en écrase pas un autre.
 
 ---
 
-## 8. Reference
+## 5. Intégrations et FAQ
 
-### 8.1 Endpoints super-admin (`/admin`)
+### 5.1 Liens avec les autres modules
 
-| Methode | URL                                      | Role                                      |
-|---------|------------------------------------------|-------------------------------------------|
-| GET     | `/admin/entreprises`                     | Liste tenants + counts                    |
-| GET     | `/admin/online`                          | Sessions actives + stats                  |
-| GET     | `/admin/ai-usage`                        | Cout/revenu IA                            |
-| GET     | `/admin/finances`                        | P&L plateforme                            |
-| GET     | `/admin/stats`                           | Stats globales                            |
-| PUT     | `/admin/entreprises/{id}/toggle`         | Activer/desactiver                        |
-| PUT     | `/admin/entreprises/{id}/representant`   | Assigner rep                              |
-| GET     | `/admin/tenants/{slug}/audit`            | Audit schema                              |
-| POST    | `/admin/tenants/{slug}/repair`           | Repair schema                             |
-| POST    | `/admin/tenants/repair-all-known-fixes`  | Repair bulk                               |
-| POST    | `/admin/tenants/{slug}/reset-passwords`  | Reset password                            |
-| GET POST| `/admin/updates`                         | Broadcast messages CRUD                   |
-| GET POST PUT DELETE | `/admin/representants[/{id}]` | Representants CRUD                     |
+| Réglage de la Configuration | Où il agit |
+|---|---|
+| Logo, coordonnées, RBQ, TPS, TVQ | Entêtes des **soumissions**, **factures**, **bons de commande**, **bons de travail** et **courriels** |
+| Thème des documents (Apparence) | Rendu de tous les **documents HTML/PDF** générés |
+| Taxes (TPS/TVQ ou autres) | **Ventes**, **Soumissions**, **Comptabilité** (calcul des taxes) |
+| Pays / devise / juridiction | **Comptabilité** (plan comptable, déclaration de taxes), documents |
+| Taux de retenue | **Comptabilité** (retenues de garantie), **Décomptes** |
+| Exercice fiscal | **Comptabilité** (périodes, états financiers) |
+| Renseignements employeur | **Pointage et Paie** (feuillets T4, RL-1, remise PD7A) |
+| Catégories de fournisseurs | **Fournisseurs / Achats**, ventilation des **dépenses** |
+| Fuseau horaire | **Pointage**, dates de création, échéances, rapports |
+| Utilisateurs et rôles | Toute la plateforme (accès et permissions) |
+| Abonnement et crédits IA | Toutes les **fonctions IA** (Assistant, Estimation, Web, etc.) |
 
-### 8.2 Endpoints auth (`/auth`)
+### 5.2 Le cas des webhooks
 
-| Methode | URL                              | Role                                     |
-|---------|----------------------------------|------------------------------------------|
-| POST    | `/auth/tenant-login`             | Etape 1 : auth entreprise                |
-| POST    | `/auth/user-login`               | Etape 2 : auth user dans tenant -> JWT   |
-| POST    | `/auth/super-admin-login`        | Auth super-admin -> session_token        |
-| POST    | `/auth/register`                 | Signup new tenant + Stripe Checkout      |
-| POST    | `/auth/logout`                   | Invalide session                         |
-| GET     | `/auth/me`                       | Info user courant                        |
-| GET     | `/auth/representants`            | Liste publique reps (pour signup form)   |
-| POST    | `/auth/b2b-tenant-lookup`        | Lookup tenant par email (B2B client)     |
-| POST    | `/auth/b2b-client-login`         | Auth B2B client                          |
-| POST    | `/auth/b2b-client-register`      | Self-registration B2B (pending approval) |
-| GET     | `/auth/b2b-me`                   | Profil B2B client                        |
+Vous entendrez peut-être parler de « points d'ancrage » ou « webhooks ». Il faut distinguer deux choses :
 
-### 8.3 Endpoints config (`/config`) — tenant admin
+- **Dans la Configuration** : il n'y a **aucun onglet Webhooks actif**. Le serveur possède bien les fonctions correspondantes (création, test, historique, avec signature HMAC et protection anti-SSRF durcie), mais **aucune interface n'y est branchée** dans cette page. N'en tenez pas compte comme utilisateur.
+- **Dans l'onglet Intégrations** : le sous-onglet **Webhooks** que vous voyez appartient au **module Intégrations** (un autre système, relié à la comptabilité). C'est celui-là qui est fonctionnel.
 
-| Methode | URL                                         | Role                              |
-|---------|---------------------------------------------|-----------------------------------|
-| GET PUT | `/config/entreprise[/{cle}]`                | Config JSON tenant                |
-| GET PUT DELETE | `/config/document-theme`             | Theme couleurs documents          |
-| GET POST PUT DELETE | `/config/users[/{user_id}]`     | Users CRUD                        |
-| PUT     | `/config/users/{user_id}/password`          | Reset password                    |
-| GET PUT | `/config/profile`                           | Profil self                       |
-| GET POST PUT DELETE | `/config/webhooks[/{webhook_id}]` | Webhooks CRUD                  |
-| POST    | `/config/webhooks/{id}/test`                | Envoyer test.ping                 |
-| GET     | `/config/webhooks/{id}/deliveries`          | Historique livraisons             |
+### 5.3 Sécurité et bonnes pratiques
 
-### 8.4 Endpoints conformite (`/conformite`)
+- **N'accordez le statut Administrateur qu'aux personnes de confiance** : il ouvre tous les réglages sensibles (taxes, utilisateurs, abonnement).
+- **Fixez pays, devise et taxes avant la première facture.** Le pays se verrouille dès qu'il existe des factures ou des écritures.
+- **Gardez toujours au moins deux administrateurs** : le système vous empêche de retirer le dernier, mais un second administrateur évite un blocage si l'un part.
+- **La recharge de crédits est un vrai paiement** : vérifiez le montant avant de confirmer.
 
-#### Licences RBQ
-| Methode | URL                                  |
-|---------|--------------------------------------|
-| GET     | `/conformite/licences`               |
-| GET     | `/conformite/licences/expiring`      |
-| GET     | `/conformite/licences/{id}`          |
-| POST    | `/conformite/licences`               |
-| PUT     | `/conformite/licences/{id}`          |
-| DELETE  | `/conformite/licences/{id}`          |
+### 5.4 Questions fréquentes
 
-#### Cartes CCQ
-| Methode | URL                                  |
-|---------|--------------------------------------|
-| GET     | `/conformite/cartes`                 |
-| GET     | `/conformite/cartes/expiring`        |
-| GET     | `/conformite/cartes/{id}`            |
-| POST    | `/conformite/cartes`                 |
-| PUT     | `/conformite/cartes/{id}`            |
-| DELETE  | `/conformite/cartes/{id}`            |
+**Q : Je ne vois que 5 onglets, pas 11. Pourquoi ?**
+R : Vous n'êtes pas administrateur. Les onglets Utilisateurs, Apparence, Juridiction & Devise, Taxes, Préférences et Fuseau horaire sont réservés aux administrateurs. Demandez à un administrateur de cocher « Administrateur » sur votre compte.
 
-#### Attestations
-| Methode | URL                                  |
-|---------|--------------------------------------|
-| GET     | `/conformite/attestations`           |
-| GET     | `/conformite/attestations/expiring`  |
-| GET     | `/conformite/attestations/{id}`      |
-| POST    | `/conformite/attestations`           |
-| PUT     | `/conformite/attestations/{id}`      |
-| DELETE  | `/conformite/attestations/{id}`      |
-| POST    | `/conformite/attestations/{id}/upload`   |
-| GET     | `/conformite/attestations/{id}/download` |
+**Q : Je n'arrive pas à modifier les informations de l'entreprise.**
+R : L'onglet Entreprise est en **lecture seule** pour les non-administrateurs (une bande ambre vous le signale). Seul un administrateur peut y écrire.
 
-#### Statistiques + IA
-| Methode | URL                                  |
-|---------|--------------------------------------|
-| GET     | `/conformite/statistics`             |
-| GET     | `/conformite/alertes`                |
-| GET     | `/conformite/constants`              |
-| GET     | `/conformite/resources`              |
-| POST    | `/conformite/ai/analyze`             |
-| POST    | `/conformite/ai/chat`                |
-| POST    | `/conformite/ai/verify-project`      |
-| POST    | `/conformite/ai/search-regulations`  |
-| POST    | `/conformite/ai/predict-renewals`    |
-| POST    | `/conformite/ai/generate-rapport`    |
-| POST    | `/conformite/ai/recommend-formations`|
+**Q : Puis-je changer le nom d'utilisateur d'un employé ?**
+R : Non. Le nom d'utilisateur est fixé à la création et n'est pas modifiable. Créez un nouveau compte si nécessaire (et désactivez l'ancien).
 
-### 8.5 Endpoints integration (`/integrations`)
+**Q : Puis-je supprimer définitivement un compte ?**
+R : Non. On **désactive** un compte (il devient Inactif) ; il n'est jamais effacé, pour préserver l'historique. La désactivation est réversible.
 
-| Methode | URL                                       |
-|---------|-------------------------------------------|
-| GET POST PUT DELETE | `/integrations[/{id}]`        |
-| GET     | `/integrations/quickbooks/auth-url`       |
-| POST    | `/integrations/quickbooks/callback`       |
-| POST    | `/integrations/{id}/test`                 |
-| POST    | `/integrations/{id}/sync`                 |
-| GET     | `/integrations/sync-history`              |
-| GET     | `/integrations/sync-stats`                |
+**Q : Le système refuse de désactiver un administrateur.**
+R : C'est le dernier administrateur actif. Créez ou promouvez un autre administrateur, puis réessayez.
 
-### 8.6 Roles utilisateurs
+**Q : J'ai changé les couleurs de l'interface sur mon ordinateur, mais pas sur ma tablette.**
+R : C'est normal. Les couleurs de l'**Interface** sont enregistrées **dans chaque navigateur** et ne se synchronisent pas. Refaites le réglage sur l'autre appareil. (Les couleurs des **Documents**, elles, sont partagées par toute l'entreprise.)
 
-| Role           | Permissions                                                 |
-|----------------|-------------------------------------------------------------|
-| `admin`        | Acces complet tenant (creer users, modifier theme, etc.)    |
-| `user`         | Acces lecture/ecriture metier standard                      |
-| `employee`     | Idem `user` (souvent lie a une fiche `employees`)          |
-| `comptable`    | Focus comptabilite (modules 7, 13)                          |
-| `gestionnaire` | Focus pilotage (modules 1, 2, 13)                           |
+**Q : Le système m'empêche de changer de pays.**
+R : Vous avez déjà des factures ou des écritures comptables. Le pays détermine les libellés fiscaux (TPS/TVQ ou Sales Tax) ; le changer fausserait l'historique. Ce réglage se fait avant de commencer à facturer.
 
-> **Flag `is_admin`** (boolean) superpose au role : permet d accorder droits admin a un user de role `comptable` par exemple.
+**Q : J'ai réglé une taxe à 0 % et elle a disparu des documents.**
+R : C'est voulu. Un **taux à 0** ou un **libellé vide** masque la taxe sur les nouveaux documents. Remettez un libellé et un taux pour la réafficher. Les documents déjà produits gardent leurs taxes d'origine.
 
-### 8.7 Limites & validations
+**Q : Où sont les feuillets T4 et RL-1 ?**
+R : Pas ici. La Configuration ne sert qu'à saisir les **renseignements employeur** (numéros, adresse). La production des feuillets se fait dans le module **Pointage et Paie**.
 
-| Regle                                      | Effet                                              |
-|--------------------------------------------|----------------------------------------------------|
-| Password user < 6 chars                    | HTTP 400                                           |
-| Username doublon dans tenant               | HTTP 400 UNIQUE constraint                         |
-| Auto-desactivation user                    | HTTP 400                                           |
-| Theme document hex invalide                | HTTP 400                                           |
-| Upload attestation > 10 MB                 | HTTP 413                                           |
-| Upload attestation MIME non autorise       | HTTP 400 (PDF/JPEG/PNG/WEBP uniquement)            |
-| Repair tenant inexistant                   | HTTP 404                                           |
-| Webhook URL invalide                       | HTTP 400                                           |
-| OAuth QuickBooks state mismatch            | HTTP 400                                           |
-| Conformite IA sans credits                 | HTTP 402                                           |
+**Q : Ma recharge de crédits a été débitée mais le solde n'a pas bougé tout de suite.**
+R : Le système facture d'abord, puis crédite. En cas d'aléa, un mécanisme de sécurité (le webhook Stripe) recrédite automatiquement. Rafraîchissez la carte Crédits IA. Si le doute persiste, contactez le soutien.
 
-### 8.8 Tables PostgreSQL principales
+**Q : Mon entreprise est passée en « mode consultation ». Que faire ?**
+R : Votre abonnement n'est plus actif (annulé, ou paiement non finalisé). La lecture reste possible, mais les écritures sont bloquées. Allez dans l'onglet **Abonnement** (qui reste accessible) et **souscrivez de nouveau** ou régularisez le paiement.
 
-#### Schema `public` (partage)
+**Q : Puis-je créer de nouveaux rôles personnalisés ?**
+R : Non. Les cinq rôles (Administrateur, Utilisateur, Employé, Comptable, Gestionnaire) sont fixes. Ce qui compte vraiment pour les droits, c'est la case **Administrateur**.
 
-| Table                  | Role                                         |
-|------------------------|----------------------------------------------|
-| `entreprises`          | Tenants (id, nom, slug, email, subscription) |
-| `representants`        | Representants commerciaux                    |
-| `pending_signups`      | Inscriptions en attente de paiement Stripe   |
-| `active_sessions`      | Sessions actives (toutes appli)              |
-| `ai_prepaid_credits`   | Credits IA prepayes (Module 12)              |
-| `ai_usage_tracking`    | Tracking usage IA (Module 12)                |
-| `dossiers_public_tokens` | Tokens partage public dossiers (Module 8)  |
+**Q : Y a-t-il un assistant IA, un export PDF ou une impression dans la Configuration ?**
+R : Non. La Configuration ne fait que régler des paramètres. Les crédits IA y sont seulement **consultés et rechargés**, pas dépensés.
 
-#### Schema `tenant_{slug}` (per-tenant)
-
-| Table                  | Role                                         |
-|------------------------|----------------------------------------------|
-| `users`                | Users du tenant                              |
-| `entreprise_config`    | Config JSON par cle (logo, RBQ, etc.)        |
-| `document_theme`       | Theme couleurs documents (overrides)         |
-| `webhooks`             | Webhooks endpoints                           |
-| `webhook_deliveries`   | Historique livraisons                        |
-| `integrations`         | Connexions QuickBooks/Sage 50                |
-| `licences_rbq`         | Licences RBQ                                 |
-| `cartes_ccq`           | Cartes CCQ employes                          |
-| `attestations_fiscales`| Attestations CNESST/RBQ/CCQ                  |
-| `subventions_demandes` | Demandes subventions                         |
-| `coproprietes`         | Coproprietes Loi 16                          |
-| (toutes les autres tables business des modules 1-13) | ... |
+**Q : Puis-je gérer des webhooks depuis la Configuration ?**
+R : Non, il n'y a pas d'onglet Webhooks actif dans la Configuration. Les webhooks disponibles se trouvent dans le sous-onglet **Webhooks** du module **Intégrations**.
 
 ---
 
-## 9. Integrations & FAQ
+## 6. Récapitulatif
 
-### 9.1 Integration Stripe
-
-- Inscription tenant via Checkout : `POST /auth/register` -> Stripe Checkout session.
-- Subscription mensuelle : `$79.99 CAD` (tarif fixe).
-- Auto-recharge credits IA : declenchee depuis `/ai/chat` si solde < $0.10 USD.
-- Webhooks Stripe gerent : signup completion, payment_succeeded, subscription_canceled, etc.
-
-### 9.2 Integration Anthropic Claude
-
-3 niveaux d utilisation IA dans le module Administration :
-
-| Module                     | Modele               | Cout par 1K tokens (input/output)     |
-|----------------------------|----------------------|----------------------------------------|
-| **Conformite** (7 endpoints) | claude-opus-4-7    | $0.015 / $0.075 (markup 30%)           |
-| **Subventions** (5 endpoints)| claude-sonnet-4-6  | $0.003 / $0.015 (markup 30%)           |
-| **Fonds Prevoyance** (multi)| claude-sonnet-4-6  | $0.003 / $0.015 (markup 30%)           |
-
-Tous deduisent des credits prepayes du tenant.
-
-### 9.3 Integration QuickBooks Online
-
-- OAuth2 Intuit
-- Sync bidirectionnel : `to_qb` (export ERP -> QB) ou `from_qb` (import QB -> ERP)
-- Mappings : Account, Class, Customer, Invoice, Bill, JournalEntry, Deposit
-- Logs dans `integration_sync_history` table
-
-### 9.4 Integration Sage 50
-
-- Connecteur sans OAuth (credentials API directs)
-- Mappings : GL Code, Customer, Invoice, Bill, Payment, Deposit
-
-### 9.5 Webhooks sortants
-
-- Configuration UI : `/configuration` -> onglet Integrations -> sous-onglet Webhooks
-- Securite : signature HMAC `X-Webhook-Signature` avec secret 32 bytes URL-safe
-- Events typiques : `invoice.created`, `payment.received`, `bt.completed`
-- Historique deliveries (limit 100) avec status et response body
-
-### 9.6 Strategie de migration / repair
-
-- Migrations defensives : `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ADD COLUMN IF NOT EXISTS` dans chaque router.
-- Pas d Alembic initialise.
-- **Reference schema** : `REFERENCE_TENANT_SCHEMA` (env var, defaut `tenant_constructi_2802c4`).
-- **Audit + Repair** : super-admin peut reparer les tenants vieux ou incomplets via `/admin/tenants/{slug}/repair`.
-
-### 9.7 Pas de table audit log dediee
-
-- **Aucune table `audit_log` centralisee** dans cette version.
-- Logging via `logger.info` / `logger.error` calls dans chaque router (sortie stdout/fichier hosting).
-- Consultation : logs Render hosting (necessite acces console hosting).
-- Tracking IA est l audit le plus complet via `ai_usage_tracking`.
-
-### 9.8 Pas de backup automatique applicatif
-
-- **Aucun endpoint backup/restore** dans le code.
-- Backups DB geres au niveau infrastructure (Render PostgreSQL automatic backups quotidiens).
-- Pour export tenant manuel : utiliser `pg_dump` cote infrastructure.
-
-### 9.9 FAQ
-
-**Q : Comment devenir super-admin ?**
-R : Le super-admin est defini hors plateforme (configuration serveur — credentials hard-codes ou variables d env). Contacter Sylvain Leduc (owner) pour acces. Le super-admin a un login distinct (`/auth/super-admin-login`) avec session_token (pas JWT).
-
-**Q : Pourquoi y a-t-il 2 etapes de login (tenant + user) ?**
-R : Architecture multi-tenant. L etape 1 (`tenant-login`) identifie l entreprise (schema), l etape 2 (`user-login`) authentifie le user dans ce schema. Permet a une meme adresse email d exister dans plusieurs tenants (uniques par tenant, pas globalement).
-
-**Q : Que se passe-t-il si un tenant ne paie pas son abonnement ?**
-R : Le `subscription_status` Stripe passe a `past_due` ou `canceled`. Le `tenant-login` retourne HTTP 403 avec message « Abonnement inactif ». Les utilisateurs ne peuvent plus se connecter mais les donnees restent en base.
-
-**Q : Combien de tenants peuvent coexister ?**
-R : Pas de limite hard-codee. Limite pratique : performance PostgreSQL avec multiplication des schemas (~200-500 schemas par instance recommande). Au-dela : sharding ou base par cluster.
-
-**Q : Comment ajouter un nouveau role utilisateur ?**
-R : **Modification de code** : ajouter le role dans la liste cote backend + frontend (dropdown). Pas de configuration UI pour ajouter des roles custom.
-
-**Q : Le super-admin peut-il voir les donnees d un tenant ?**
-R : Indirectement. Les endpoints `/admin/*` retournent surtout des **stats agregees** (counts, montants), pas les donnees brutes. Pour acceder aux donnees d un tenant : se connecter en tant qu un user de ce tenant (necessite reset password).
-
-**Q : Comment changer le tarif ERP (79.99$) ?**
-R : Modification de constante `ERP_MONTHLY_PRICE` dans `admin.py` + ajustement Stripe Price ID. Necessite redeploiement.
-
-**Q : Comment exempter un tenant de facturation IA ?**
-R : Ajouter son ID (entreprise_id) dans `AI_GUARD_EXEMPT_IDS = {1, 105, 172}` (`ai.py:36`). Modification de code + redeploiement.
-
-**Q : Le module Conformite est-il obligatoire au Quebec ?**
-R : OUI pour les entreprises de construction reglementees (RBQ exige licence valide, CCQ exige cartes employes). L ERP facilite le suivi mais ne valide pas les conformites avec les organismes officiels (pas d API integration RBQ/CCQ — saisie manuelle).
-
-**Q : Les attestations CNESST sont-elles renouvelees automatiquement ?**
-R : NON. Le module rappelle les expirations (alertes 30/60 jours) mais le renouvellement se fait manuellement aupres de la CNESST. Apres renouvellement : modifier l attestation dans l ERP avec nouvelle date_expiration.
-
-**Q : Comment ajouter une categorie RBQ personnalisee ?**
-R : La liste des 26 categories RBQ est codee en dur (`conformite.py`). Modification de code requise. Les RBQ officielles sont fixes (pas de personnalisation possible).
-
-**Q : Le sync QuickBooks est-il bidirectionnel en temps reel ?**
-R : NON. Sync **a la demande** uniquement (bouton « Synchroniser »). Pas de sync automatique programmee. Pour automatiser : creer un cron externe qui appelle `/integrations/{id}/sync` periodiquement.
-
-**Q : Les webhooks sont-ils retentes en cas d echec ?**
-R : Implementation actuelle : pas de retry automatique (a verifier en prod). Pour robustesse : utiliser un service tiers (Hookdeck, Svix) pour gerer les retries.
-
-**Q : Comment voir les logs d audit complets d un tenant ?**
-R : **Pas de table audit centralisee**. Les actions IA sont auditees dans `ai_usage_tracking`. Les autres actions ne sont auditees que via les logs hosting (acces Render). Pour audit business complet : utiliser le sync QuickBooks (toutes les ecritures syncees).
-
-**Q : Comment desactiver l auto-creation de tables ?**
-R : Le code utilise `CREATE TABLE IF NOT EXISTS` partout (defensive). Pour migration formelle : initialiser Alembic. Pas configurable en UI.
-
-**Q : Le module Subventions interagit avec les organismes (Hydro-Quebec, etc.) ?**
-R : NON. Le module aide a **gerer les demandes** (formulaire, checklist, suivi statut, IA aide redaction) mais ne soumet pas directement aux organismes. La soumission finale se fait sur les portails officiels.
-
-**Q : Les calculateurs sont-ils certifies / normes ?**
-R : Les calculateurs implementent des formules standards (CNB, CSA, manuels metier) mais les resultats sont **a titre indicatif**. Pour calculs officiels (permis, assurance), valider avec un ingenieur professionnel.
+- **Un centre de paramétrage à 11 onglets** : Profil, Utilisateurs, Entreprise, Apparence, Interface, Juridiction & Devise, Taxes, Préférences, Fuseau horaire, Abonnement, Intégrations.
+- **Deux profils** : l'**administrateur** voit les 11 onglets ; l'**utilisateur ordinaire** en voit 5 (Profil, Entreprise en lecture seule, Interface, Abonnement, Intégrations).
+- **Le vrai droit, c'est la case « Administrateur »** (`is_admin`), pas l'intitulé du rôle. Les cinq rôles sont surtout des étiquettes ; seul « super-administrateur » est interdit.
+- **Deux systèmes de couleurs distincts** : **Apparence** (documents, en base, toute l'entreprise, 8 couleurs) et **Interface** (ERP, dans le navigateur, par utilisateur, 4 couleurs).
+- **Identité de l'entreprise** : logo (≤ 1 Mo) + 12 champs (RBQ, NEQ, TPS, TVQ...) repris sur tous les documents.
+- **Fiscalité** : pays et devise (le pays se verrouille dès la première facture), 2 taxes configurables (0 = masquée), taux de retenue, état/province, exercice fiscal, renseignements employeur (T4/RL-1), catégories de fournisseurs.
+- **Utilisateurs** : création, rôles, réinitialisation de mot de passe (6 caractères minimum), **désactivation** (jamais de suppression) ; le **dernier administrateur** est protégé.
+- **Abonnement (Stripe)** : souscrire, gérer via le portail, annuler en fin de période ; **crédits IA** rechargeables de 5 à 500 $ (paiement réel, idempotent).
+- **Mode consultation** : sans abonnement actif, toutes les écritures de la Configuration sont bloquées, sauf le réabonnement et la déconnexion.
+- **Webhooks** : aucun onglet actif dans la Configuration ; ils vivent dans le module **Intégrations**.
 
 ---
 
-## 10. Recap one-pager
+**Fichiers sources vérifiés** : `frontend/src/pages/ConfigurationPage.tsx` (4 108 lignes, 11 onglets), `frontend/src/api/config.ts` (661 lignes), `frontend/src/api/stripe.ts`, `frontend/src/store/useConfigStore.ts` (209 lignes), `frontend/src/store/useStripeStore.ts` (145 lignes), `frontend/src/store/useUiThemeStore.ts` (236 lignes), `frontend/src/i18n/locales/{fr,en}/config.json` (441 lignes), `backend/routers/config.py` (3 247 lignes, 38 points d'accès), `backend/routers/stripe_routes.py` (379 lignes, 6 points d'accès), `backend/routers/html_utils.py` (thème des documents), `backend/erp_auth.py` (gardes d'accès), `frontend/src/pages/IntegrationPage.tsx` (1 608 lignes, 7 sous-onglets — module séparé).
 
-- **3 niveaux d acces** : Super-admin (`/admin`) / Tenant admin (`/configuration`) / User standard.
-- **5 roles users** : admin / user / employee / comptable / gestionnaire (+ flag `is_admin` superpose).
-- **Architecture** : multi-tenant PostgreSQL schema-per-tenant + tables `public` partagees.
-- **2 etapes login** : tenant-login (entreprise) puis user-login (user dans tenant) -> JWT.
-- **Constantes plateforme** : ERP 79.99$/mois, Render 434.67$/mois, commissions reps 40%, taxes 26.5%.
-
-### 6 onglets `/admin` (super-admin)
-Entreprises / En Ligne / Usage IA / Finances / Mises a jour / Representants.
-
-### 7 onglets `/configuration` (tenant admin)
-Profil / Utilisateurs / Entreprise / Soumissions / Apparence (theme 8 couleurs) / Abonnement / Integrations.
-
-### 6 onglets `/integration`
-Vue d ensemble / QuickBooks / Sage 50 / Webhooks / Correspondance / Historique.
-
-### 3 sections `/conformite`
-Licences RBQ (26 categories) / Cartes CCQ (28 metiers) / Attestations (5 types incl. CNESST). 7 endpoints IA Claude Opus 4.7.
-
-### Modules complementaires
-- **Subventions** : aide demandes gouvernementales + 5 endpoints IA Sonnet
-- **Calculateurs** : multi-metiers (beton, electricite, toiture, peinture, plomberie, CVAC)
-- **Fonds Prevoyance Loi 16** : copropriete + IA analyse + calcul valeur reconstruction
-
-### Theme documents (8 couleurs personnalisables)
-primary `#1F4E79` / primary_dark / accent `#27A376` / accent_light / header_text / table_row_alt / info_bg / border. Race-safe SELECT FOR UPDATE.
-
-### Limitations connues
-- Pas de table audit log centralisee (logs hosting + ai_usage_tracking seulement)
-- Pas de backup applicatif (geree par hosting)
-- Pas d Alembic (migrations defensives `IF NOT EXISTS`)
-- Pas de sync auto QuickBooks (a la demande seulement)
-- Pas de retry webhook automatique
-- Pas de roles configurables UI (5 roles codes en dur)
-- Constantes financieres codees en dur (ERP_PRICE, RENDER_COST, etc.)
-
----
-
-**Documentation generee a partir du code** : `admin.py` (1379 lignes), `auth.py` (698 lignes), `config.py` (1167 lignes), `conformite.py` (2192 lignes), `integration.py`, `subventions.py`, `calculators.py`, `fonds_prevoyance.py`, `AdminPage.tsx`, `ConfigurationPage.tsx`, `IntegrationPage.tsx`, `ConformitePage.tsx`, `SubventionsPage.tsx`.
-
-**Manuels lies** :
-- Module 9 (Employes — fiches employes liees aux cartes CCQ) — `09-employes.md`
-- Module 19 (Immobilier — sous-onglet Fonds Prevoyance) — `11-immobilier.md`
-- Module 25 (IA — credits IA, Stripe) — `12-ia.md`
-- README principal (vue d ensemble manuels) — `README.md`
-
----
-
-**Felicitations !** Vous avez termine la lecture du manuel utilisateur complet de Constructo AI ERP, version 2.0 verifiee contre code source. Pour une vue d ensemble : voir [README.md](./README.md).
+**Manuels liés** :
+- Module 11 (Employés — fiches liées aux comptes utilisateurs) — `11-operations-employes.md`
+- Module 13 (Pointage et Paie — feuillets T4/RL-1/PD7A alimentés par les renseignements employeur) — `13-operations-pointage.md`
+- Module 15 (Comptabilité — taxes, retenue, pays/devise, exercice fiscal) — `15-operations-comptabilite.md`
+- Module 25 (Assistant IA — crédits IA rechargés ici) — `25-communication-assistant-ia.md`
+- Manuel des Intégrations (QuickBooks / Sage — onglet Intégrations) — voir la fiche du module Intégrations
+- Vue d'ensemble des manuels — `README.md`
