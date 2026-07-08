@@ -1,12 +1,12 @@
 # Module 07 — Quotes and estimates (manual, AI, import)
 
-> **Version**: 3.0 (complete overhaul verified against the source code, 2026-07)
-> **Frontend route**: `/devis` (sidebar menu "Quotes", "Sales" group). The on-screen title is **"Quotes"** (`devis.title`), even though the URL and the internal code say "devis". Public client-validation page: `/devis/public/:token` (no authentication).
-> **API prefix**: `/api/erp/v1`. Three routers are mounted under this prefix: `/devis/manuel-template` (Manual template catalog), `/devis` (the core of the module) and `/devis/ai` (read-only assistant). Mount order matters: `manuel-template` is mounted **before** `devis`, otherwise the dynamic route `/{devis_id}` would capture the word "manuel-template" (`erp_api.py:1000-1010`).
-> **Reference code (backend)**: `backend/routers/devis.py` (13,085 lines — CRUD, lines, AI, sending, public page, project conversion) · `backend/routers/devis_ai.py` (344 lines — **read-only** Quotes assistant) · `backend/routers/devis_manuel_template.py` (663 lines — custom sections and lines of the Manual template). Total: **66 endpoints** (57 + 1 + 8).
-> **Reference code (frontend)**: `frontend/src/pages/DevisPage.tsx` (3,052 lines — list, detail panel, modals) · `components/devis/EstimationIA.tsx` (1,728 lines) · `components/devis/ConstructionTemplate.tsx` (1,130 lines) · `pages/DevisPublicPage.tsx` (538 lines) · `components/devis/DevisRenderModal.tsx` (534 lines) · `components/devis/AiProfileManager.tsx` (410 lines) · `components/devis/DevisAssistantTab.tsx` (152 lines) · `components/devis/ClientInfoCard.tsx` · `components/devis/DevisConditionsEditor.tsx` · `components/devis/DevisFinancialSummary.tsx`. API clients: `api/devis.ts`, `api/devisAi.ts`.
-> **PostgreSQL tables (per tenant)**: `devis` (header), `devis_lignes`, `devis_assignations`, `devis_ai_estimations`, `ai_profiles` + `ai_profile_documents`, `conversations` + `conversation_documents`, `manuel_custom_sections` + `manuel_custom_lignes`, plus writes to `companies`, `contacts`, `projects`, `opportunities`, `produits`, `employees`, `factures`. **Shared** table: `public.devis_public_tokens` (public tokens, 90-day validity). AI path: `public.ai_prepaid_credits`, `public.ai_usage_tracking`.
-> **Scope**: this module is a company's **central quote editor**. It handles the whole cycle: build a quote in **three ways** (by hand, with **AI**, or by **importing** a plan or a takeoff), edit it online, apply a **markup** (cost-plus) per quote or per line, set the **terms and exclusions**, produce a **professional HTML document**, **send it to the client** through a signable link, **export** (Excel, QuickBooks CSV), **convert to a project** and **invoice**. It does not replace the **Takeoff** module (which measures quantities on a plan and sends them back here), nor the **Accounting** module (which issues invoices): it feeds and connects them.
+> **Version**: 4.0 (complete overhaul verified against the source code, 2026-07 — added the "Phase 2" WYSIWYG client-document editor).
+> **Frontend route**: `/devis` (sidebar menu "Quotes", "Sales" group). The on-screen title is **"Quotes"** (`devis.title`), even though the URL and the internal code say "devis". An alias `/soumissions` redirects to `/devis`. Public client-validation page: `/devis/public/:token` (no authentication).
+> **API prefix**: `/api/erp/v1`. Three routers are mounted under this prefix: `/devis/manuel-template` (Manual template catalog), `/devis` (the core of the module) and `/devis/ai` (read-only assistant). Mount order matters: `manuel-template` is mounted **before** `devis`, otherwise the dynamic route `/{devis_id}` would capture the word "manuel-template" and return a 422 error (`erp_api.py:1058-1073`).
+> **Reference code (backend)**: `backend/routers/devis.py` (13,869 lines, **63 endpoints** — CRUD, lines, sections, document editor, AI, sending, public page, project conversion) · `backend/routers/devis_ai.py` (344 lines, **1 endpoint** — **read-only** Quotes assistant) · `backend/routers/devis_manuel_template.py` (663 lines, **8 endpoints** — custom sections and lines of the Manual template). Total: **72 endpoints**.
+> **Reference code (frontend)**: `frontend/src/pages/DevisPage.tsx` (3,071 lines — list, detail panel, modals) · `components/devis/EstimationIA.tsx` (1,728 lines) · `components/devis/DevisDocumentEditor.tsx` (343 lines — **WYSIWYG document editor**) · `components/devis/ConstructionTemplate.tsx` (1,130 lines) · `pages/DevisPublicPage.tsx` (538 lines) · `components/devis/DevisRenderModal.tsx` (534 lines) · `components/devis/AiProfileManager.tsx` (410 lines) · `components/devis/DevisAssistantTab.tsx` (152 lines) · `components/devis/ClientInfoCard.tsx` · `components/devis/DevisConditionsEditor.tsx` · `components/devis/DevisFinancialSummary.tsx`. API clients: `api/devis.ts`, `api/devisAi.ts`.
+> **PostgreSQL tables (per tenant)**: `devis` (header), `devis_lignes`, `devis_assignments`, `devis_ai_estimations`, `ai_profiles` + `ai_profile_documents`, `conversations` + `conversation_documents`, `manuel_custom_sections` + `manuel_custom_lignes`, plus writes to `companies`, `contacts`, `projects`, `opportunities`, `produits`, `employees`, `factures`. **Shared** table: `public.devis_public_tokens` (public tokens, 90-day validity). AI path: `public.ai_prepaid_credits`, `public.ai_usage_tracking`.
+> **Scope**: this module is a company's **central quote editor**. It handles the whole cycle: build a quote in **three ways** (by hand, with **AI**, or by **importing** a plan or a takeoff), edit it online, apply a **markup** (cost-plus method) per quote or per line, set the **terms and exclusions**, produce a **professional HTML document**, **edit it visually** before sending, **send it to the client** through a signable link, **export** (Excel, QuickBooks CSV), **convert to a project** and **invoice**. It does not replace the **Takeoff** module (which measures quantities on a plan and sends them back here), nor the **Accounting** module (which issues invoices): it feeds and connects them.
 
 ---
 
@@ -39,58 +39,60 @@ This is the key to the module. You are never forced to type everything by hand.
 | **AI** | The **"AI Estimation"** tab | You chat with a virtual expert (Claude), you describe the project, then you click "Generate quote" | The AI proposes a quote structured by trade, which you review and then add to the quote or use to create a new quote |
 | **Import** | The **"AI Estimation"** tab (upload a plan or a document) **or** the **"Takeoff"** tab (measure on a PDF) | You provide a PDF plan, an image, a price list, or you measure quantities on a plan | The AI **reads** the document and produces an **analysis** (category, areas, trades) or a cost estimate; the Takeoff sends back priced **quantities** |
 
-> **Understand this — "import" does not fill in the lines by itself.** When you upload a plan into AI Estimation, the system produces an **analysis** (text, diagnostic, areas). There is **no button that writes quote lines directly from a file**. You review the analysis, then you click "Generate quote" (AI Estimation) or "Apply to quote" (Takeoff) to create the lines. This is intentional: you always keep the final say over what goes into the price.
+> **Understand this — "import" is not a distinct server-side mode, and it does not fill in the lines by itself.** There is **no "import" endpoint** in the module: the quantities from the Takeoff and the lines from the AI are written by the **same standard line endpoints** (`POST /devis/{id}/lignes/batch`). When you upload a plan into AI Estimation, the system first produces an **analysis** (text, diagnostic, areas); there is **no button that writes lines directly from a file**. You review the analysis, then you click "Generate quote" (AI Estimation) or "Apply to quote" (Takeoff) to create the lines. This is intentional: you always keep the final say over what goes into the price.
 
 ### 1.3 Access from the sidebar
 
-Click **Quotes** in the sidebar. The page opens on the **list** of quotes (`/devis`). A direct link exists to open a specific quote: `app.constructoai.ca/devis?open=<id>` (used by the "View quote" buttons elsewhere in the ERP).
+Click **Quotes** in the sidebar (the "document" icon, `Sidebar.tsx:52`). The page opens on the **list** of quotes (`/devis`). A direct link exists to open a specific quote: `app.constructoai.ca/devis?open=<id>` (used by the "View quote" buttons elsewhere in the ERP).
 
 ### 1.4 The six tabs
 
-At the top of the page, six tabs (`DevisPage.tsx:1358`):
+At the top of the page, six tabs (`DevisPage.tsx:1360`):
 
 | Tab | Role | Access |
 |-----|------|--------|
 | **Quotes** | The list + the detail panel (the core of the module) | Everyone |
 | **AI Estimation** | Chat with an AI expert and **generate** a quote | Everyone |
-| **Takeoff** | Take quantities on a PDF plan (**separate module**, see Chapter 30) | Everyone |
+| **Takeoff** | Take quantities on a PDF plan (**separate module**, see Chapter 32) | Everyone |
 | **Manual** | The "Quebec Construction Template" (9 sections to check) | Everyone |
 | **Conditions** | Edit the company's **default** terms and exclusions | **Administrators only** |
 | **AI Assistant** | Ask **read-only** questions about your quotes (the "sparkles" icon) | Everyone |
 
-> **The "Conditions" tab does not appear** for a user who is not an administrator (`isAdmin`, `DevisPage.tsx:1363`). This is normal: it touches settings that apply to the entire company.
+> **The "Conditions" tab does not appear** for a user who is not an administrator (`isAdmin = role === 'admin'`, `DevisPage.tsx:640/1365`). A non-administrator therefore sees only **five** tabs. This is normal: it touches settings that apply to the entire company.
 >
-> **The "Takeoff" tab is a full module of its own** (loaded on demand, `components/metre-pdf/MetrePdf`). Its detailed operation is described in **Chapter 30 — Takeoff**. Here, only the **bridge** matters: "Apply to quote" / "Create quote".
+> **The "Takeoff" tab is a full module of its own** (loaded on demand, `components/metre-pdf/MetrePdf`). Its detailed operation is described in **Chapter 32 — Takeoff**. Here, only the **bridge** matters: "Apply to quote" / "Create quote".
 
 ### 1.5 Permissions and roles
 
-The module is **deliberately open to the whole team**: create, edit, add lines, send, change a status, delete — all of this is allowed to **any authenticated user** of the tenant. The only reserved action is editing the company's **default terms/exclusions** (`PUT /devis/defaults` → `require_tenant_admin_or_role()`, `devis.py:2564`). This is the module's single admin-only entry point.
+The module is **deliberately open to the whole team**: create, edit, add lines, edit the document, send, change a status, delete — all of this is allowed to **any authenticated user** of the tenant. The only reserved action is editing the company's **default terms/exclusions** (`PUT /devis/defaults` → `require_tenant_admin_or_role()`, `devis.py:2625`). This is the module's single admin-only entry point.
 
 | Action | Who is allowed |
 |--------|----------------|
-| View, create, edit a quote; add/edit/delete lines; send; change the status; convert to a project; invoice; export | Any valid tenant account |
+| View, create, edit a quote; add/edit/delete lines; edit the document; send; change the status; convert to a project; invoice; export | Any valid tenant account |
 | Delete a quote | Any valid account — **except** if the status is `Accepted` or `Completed` (400 refusal) |
 | Edit the company's **default terms/exclusions** (Conditions tab) | **Administrators** (`is_admin`, re-checked server-side) |
 
-**Read-only mode.** If the tenant's subscription is past due, the account can switch to **read-only**: reads work, but any **write** returns 403. This control is applied upstream in authentication and covers every endpoint in the module. Special case: HTML generation **skips the cache write** in read-only mode but remains viewable (`devis.py:11202`). Public token endpoints (client viewing, accepting, declining) do not pass through this control.
+> **"Admin-only" clarification:** only the company's **default** values are reserved for administrators. The terms and exclusions of a **given quote** (`conditions_text` / `exclusions_text`) remain editable by **any** tenant user, by editing the quote.
 
-**AI credits.** The artificial-intelligence features (AI Estimation, document analysis, assistant, quote estimation, 3D render) **consume AI credits billed to the tenant**. Each AI endpoint first checks credits (402 if the balance is insufficient) and logs the spend. The balance is always shown in the AI Estimation toolbar (or "Unlimited" for exempt accounts).
+**Read-only mode.** If the tenant's subscription is past due, the account can switch to **read-only**: reads work, but any **write** returns 403. This control is applied upstream in authentication (`get_current_user`) and covers every endpoint in the module. Special cases: HTML generation **skips the cache write** in read-only mode but remains viewable; the document editor opens in **locked preview** (editing disabled). Public token endpoints (client viewing, accepting, declining) do not pass through this control.
+
+**AI credits.** The artificial-intelligence features (AI Estimation, document analysis, assistant, quote estimation, 3D render) **consume AI credits billed to the tenant**. Each AI endpoint first checks the context (schema present, AI guard) then the credits (402 if the balance is insufficient) and logs the spend. The balance is always shown in the AI Estimation toolbar (or "Unlimited" for exempt accounts).
 
 **Isolation.** Every request is scoped to the tenant's PostgreSQL schema; one company never sees another's quotes. Documents attached to an AI conversation are additionally isolated **per user** within the tenant.
 
 ### 1.6 Automatic numbering
 
-On creation, each quote receives a **`DEV-YYYY-NNN`** number (e.g., `DEV-2026-007`): the current year followed by the identifier. The number is produced in a way that is **fail-safe even under simultaneous clicks**: the quote is first inserted with a provisional number, then updated with its final number derived from its real identifier (`RETURNING id`, `devis.py:9084`). A `COUNT + 1` that could produce duplicates is never used.
+On creation, each quote receives a **`DEV-YYYY-NNN`** number (e.g., `DEV-2026-007`): the current year followed by the identifier. The number is produced in a way that is **fail-safe even under simultaneous clicks**: the quote is first inserted with a provisional number, then updated with its final number derived from its real identifier (`RETURNING id`, `devis.py:9187`). The insertion and the renumbering are **committed together** (no orphan "TEMP" quote). A `COUNT + 1` that could produce duplicates is never used.
 
 ### 1.7 Statuses and types
 
-**Statuses.** A quote is born as a **Draft**. It moves to **Sent** when you send it, then to **Accepted** or **Declined** depending on the client's decision. Other values exist (`Validated`, `Pending`, `Completed`, `Cancelled`, `Expired`) and are reachable through bulk update or other flows. The list filter exposes only the six common statuses (see 2.3).
+**Statuses.** A quote is born as a **Draft**. It moves to **Sent** when you send it, then to **Accepted** or **Declined** depending on the client's decision. Other values exist (`Validated`, `Pending`, `Completed`, `Cancelled`, `Expired`) and are reachable through bulk update or other flows; an imported or inherited quote may carry a status outside the dropdown (a "(current)" option is then added automatically). The list filter exposes only the six common statuses (see 2.3).
 
-**Quote types.** **Detailed** (default) or **Budget**. The "Budget" type signals an approximate estimate.
+**Quote types.** **Detailed** (default) or **Budget**. The "Budget" type signals an approximate estimate. These are the **only two values** (`TYPE_SOUMISSION_OPTIONS`).
 
-**Project type.** Five choices at creation (`TYPE_PROJET_OPTIONS`, `DevisPage.tsx:593`): New residential, Residential renovation, New commercial, Commercial renovation, Institutional/Public.
+**Project type.** Five choices at creation (`DevisPage.tsx:594`): New residential, Residential renovation, New commercial, Commercial renovation, Institutional/Public. Not to be confused with the quote type: the **project type** is **propagated to the project** created on acceptance.
 
-**Priority.** Normal (default), High, Urgent.
+**Priority.** Normal (default), Urgent, Critical (`DevisPage.tsx:586-588`).
 
 ### 1.8 The pricing model: markup is **embedded in the prices**
 
@@ -102,27 +104,38 @@ Since a 2026 business decision, the quote operates on a **"markup embedded in th
 - The system applies, on top, a **markup** made of three parts: **Administration** (3% by default), **Contingencies** (12% by default) and **Profit** (15% by default). Together, that is a factor of roughly **×1.30**.
 - **The price shown to the client on each line already contains this markup.** The three "Administration / Contingencies / Profit" lines in the financial summary are **not** amounts added on top: they are an **informational breakdown** of the markup already included in the prices.
 
-> **Do not be misled**: if you see "Administration 3%, Contingencies 12%, Profit 15%" under the subtotal, that **does not increase** the total. The "all taxes included" total the client sees is the **same** in the preview, in the Excel, and in the CSV. The breakdown exists only so you know how your price is composed. The summary reminds you of this with the note "Including markup added to unit prices:".
+> **Do not be misled**: if you see "Administration 3%, Contingencies 12%, Profit 15%" under the subtotal, that **does not increase** the total. The "all taxes included" total the client sees is the **same** in the preview, in the Excel, and in the QuickBooks CSV. The breakdown exists only so you know how your price is composed. The summary reminds you of this with the note "Including markup embedded in the unit prices:".
 
 Two concrete cases:
 
 - **Markup at 3/12/15**: your unit prices are your costs, and the margin is added for display. A gray callout details the share of each part.
-- **Markup at 0/0/0**: a blue callout appears — "0% markup — overhead, contingencies and profit already included in the unit prices (all-inclusive, e.g. General Contractor estimate)". This is the "all-inclusive" mode, typical of a general contractor's estimate.
+- **Markup at 0/0/0**: a blue callout appears — "0% markup — overhead, contingencies and profit already included in the unit prices (all-inclusive price)". This is the "all-inclusive" mode, typical of a general contractor's estimate.
 
-**The 15% profit: a default, not a lock.** The 15% is the **default** value (deterministic pricing tool, AI generation, default column value in the database). But you can enter **any profit percentage** on the quote (0 to 100%) and even a different percentage **per line**. The final document always uses the **actually recorded** percentage, not a hard-coded 15%.
+**The 15% profit: a default, not a lock.** The 15% is the **default** value (deterministic calculation tool, AI generation forced to 15%, default column value in the database, `devis.py:1289` and `6975`). But you can enter **any profit percentage** on the quote (0 to 100%) and even a different percentage **per line** (the per-line override even accepts negative values, for a rebate or a special case). The final document always uses the **actually recorded** percentage, not a hard-coded 15%.
 
-**The per-sq.ft. price base comes from the expert, not from a constant.** There is **no fixed "$X/sq.ft." value** in the module. When the AI prices a build, **it** provides the per-square-foot rate (per floor), based on the tier and the region. The server only imposes the markup cascade (×1.30) and **soft validation ranges** (see 4.6) that flag an abnormal price without ever blocking it. The "Economy tier" used by default corresponds to the **bottom of the category's range** (for example the low end of $200–450/sq.ft. for a new residential build), not to a single figure.
+**The per-sq.ft. price base comes from the expert, not from a constant.** There is **no fixed "$X/sq.ft." value** in the module. When the AI prices a build, **it** (through the expert profile) supplies the per-square-foot rate, per floor, based on the tier and the region. The server, for its part, hard-codes only the **markup cascade** (×1.30) and **soft validation ranges** (see 4.6) that flag an abnormal price without ever blocking it. The "Economy tier" used by default corresponds to the **bottom of the category's range** (for example the low end of $200–450/sq.ft. for a new residential build), not to a single figure.
 
-### 1.9 What the module does not do (verified in the code)
+### 1.9 The client document editor (WYSIWYG) — new
 
-- **No direct PDF export.** The PDF export was removed (`DevisPage.tsx:19`). To get a PDF, use **"Generate HTML"** then **Print** (the browser produces the PDF), or the client's public page ("Print" / "Download" button). Vectorial PDF export exists only in the **Takeoff/CAD** module, not here.
+Before sending, you can **retouch the document exactly as it will go to the client**, directly on the rendering, without going through forms. The **"Edit the document"** button (detail panel) opens a full-screen window that shows the **real HTML document**, where you click **directly** on a text, a bullet or an amount to correct it. Two levels of editing coexist:
+
+- **structured fields** (project title, description bullets, a section's title, a section's amount, terms, exclusions), which modify the quote's real data;
+- **display overrides specific to this document** (number, date, client and company contact details, inclusions text, financial-summary cells, breakdown by trade), which change **only what is written** on this specific document, without ever touching the shared records or the calculated total.
+
+A **"Revert to generated"** button cancels all your edits. The full operation is described in 2.10.
+
+### 1.10 What the module does not do (verified in the code)
+
+- **No direct PDF export.** The PDF export was removed (`DevisPage.tsx:19` — "PDF export removed — use Generer HTML + Apercu instead"). To get a PDF, use **"Generate HTML"** then **Print** (the browser produces the PDF), or the client's public page ("Print" / "Download" button). Vectorial PDF export exists only in the **Takeoff/CAD** module, not here. The data exports are **Excel (.xlsx)** and the **QuickBooks CSV**.
 - **The "Conditions" tab is hidden from non-administrators.**
 - **The AI Assistant (last tab) is read-only**: it answers questions about your data, but **creates and modifies no quote**. To generate, use the "AI Estimation" tab.
 - **Import does not fill lines automatically** (see 1.2): it produces an analysis to review.
 - **A single 3D render per quote** (replaceable or removable).
 - **The client's signature is required to accept**: the name alone is not enough.
 - **Lines require a quantity greater than 0.** The "administration / contingencies / profit" items and lines with quantity 0 are excluded from bulk adds.
-- **The 3D render is paid**: generating it consumes the tenant's AI credits (×1.30); attaching or removing it is free.
+- **The 3D render is paid at generation**: generating it consumes the tenant's AI credits (×1.30, via `/cao/render`); **attaching** it or **removing** it from the quote is **free**.
+- **No phone number is hard-coded in this module.** The phone number shown on the client document comes from the **company configuration** (the `ent_tel` field, possibly overridden for a document via the editor). Do not look here for a "hard-coded" number.
+- **No duplication of a full quote** and no multi-currency conversion.
 
 ---
 
@@ -130,14 +143,14 @@ Two concrete cases:
 
 ### 2.1 The four indicators (KPIs)
 
-Always visible at the top (`DevisPage.tsx:1334`), fed by `getDevisStatistics()`:
+Always visible at the top (`DevisPage.tsx:1336`), fed by `getDevisStatistics()`:
 
 | Indicator | Meaning |
 |-----------|---------|
 | **Total quotes** | Total number of quotes for the tenant |
 | **Drafts** | Quotes still in Draft status |
 | **Sent** | Quotes sent to the client |
-| **Acceptance rate** | Accepted ÷ (accepted + declined), as a percentage |
+| **Acceptance rate** | Accepted ÷ (accepted + declined), as a percentage (one decimal) |
 
 ### 2.2 The tab bar
 
@@ -145,7 +158,7 @@ The six tabs described in 1.4. The active tab is highlighted. The "AI Assistant"
 
 ### 2.3 The "Quotes" tab — the list
 
-**The command bar** (`DevisPage.tsx:1669`) contains:
+**The command bar** (`DevisPage.tsx:1671`) contains:
 
 - The main **"New quote"** button.
 - Three view buttons: **List**, **Table**, **Cards**.
@@ -153,9 +166,9 @@ The six tabs described in 1.4. The active tab is highlighted. The "AI Assistant"
 - A **Status** filter: All, Draft, Sent, Accepted, Declined, Expired.
 - A **Type** filter: All types, Detailed, Budget.
 
-**The bulk-action bar** appears as soon as you check at least one quote (`DevisPage.tsx:1649`): "{n} quote(s) selected", a "Change status…" dropdown (Draft / Sent / Accepted / Declined / Expired) and a "Deselect" button.
+**The bulk-action bar** appears as soon as you check at least one quote (`DevisPage.tsx:1651`): "{n} quote(s) selected", a "Change status…" dropdown (Draft / Sent / Accepted / Declined / Expired) and a "Deselect" button.
 
-**The List view** (`DevisPage.tsx:1707`) shows a table on desktop and cards on mobile. Columns are sortable and resizable:
+**The List view** (`DevisPage.tsx:1712`) shows a table on desktop and cards on mobile. Columns are sortable and resizable:
 
 | Column | Content |
 |--------|---------|
@@ -171,44 +184,45 @@ The six tabs described in 1.4. The active tab is highlighted. The "AI Assistant"
 | **Created** | Creation date |
 | (trash) | Delete |
 
-> **Inline editing of the status to "Accepted"**: the system **confirms first** ("Marking quote '…' as Accepted will automatically create a new project. Continue?"), because acceptance triggers project creation on the server.
+> **Inline editing of the status to "Accepted"**: the system **confirms first** ("Marking quote '…' as Accepted will automatically create a new project. Continue?", `DevisPage.tsx:711`), because acceptance triggers project creation on the server.
 
-**The Table view** (`DevisPage.tsx:1844`) adds the detailed financial columns: **Subtotal / GST / QST / Total**.
+**The Table view** (`DevisPage.tsx:1846`) adds the detailed financial columns: **Pre-tax / GST / QST / Total** (without inline status editing).
 
-**The Cards view** (`DevisPage.tsx:1936`) presents a grid of cards (number, status badge, name, client, amount in green, trash).
+**The Cards view** (`DevisPage.tsx:1938`) presents a grid of cards (number, status badge, name, client, amount in green, trash).
 
-**Status colors**: Draft = gray, Sent = indigo, Accepted/Completed = green, Declined/Cancelled = red, Expired = amber.
+The list is **paginated** (20 per page). **Status colors**: Draft = gray, Sent = indigo, Accepted/Completed = green, Declined/Cancelled = red, Expired = amber.
 
 ### 2.4 The detail panel
 
-Click a quote to open its **detail panel** (right-hand column on desktop, full screen on mobile). At the top: the number, the opportunity number if there is a link (blue badge), the project name, an **Edit** pencil and the close button. Then the status badge, the client and the description.
+Click a quote to open its **detail panel** (right-hand column on desktop, full screen on mobile, `DevisPage.tsx:1978`). At the top: the number, the opportunity number if there is a link (blue badge), the project name, an **Edit** pencil and the close button. Then the status badge, the client and the description.
 
 #### A. The financial summary (editable)
 
-`DevisFinancialSummary` component (`DevisPage.tsx:383`). This is where you set the markup and the presentation.
+`DevisFinancialSummary` component (`DevisPage.tsx:384`). This is where you set the markup and the presentation.
 
-- **Subtotal**, followed by the note "Including markup added to unit prices:".
+- **Subtotal (pre-tax)**, followed by the note "Including markup embedded in the unit prices:".
 - If Administration = Contingencies = Profit = 0, a blue callout explains the "all-inclusive" mode.
 - **Three lines Administration / Contingencies / Profit.** Each offers:
   - an **eye** to show or hide it in the document;
   - an **editable label** (e.g., rename "Administration" to "Overhead");
   - a **percentage** field (0 to 100, step 0.5);
   - a **dollar amount** field (entering it recalculates the matching percentage).
-  - Default values: Administration 3%, Contingencies 12%, Profit 15%.
-- The **tax lines** (GST 5%, QST 9.975% in Quebec by default) then the **Grand total** in bold.
-- A **"Quote columns"** section: five toggles that decide which columns are visible in the exported document — **Unit**, **Quantity**, **Unit price**, **Line amount**, **Labor and Material**.
+  - Default values: Administration 3%, Contingencies 12%, Profit 15% (`DevisPage.tsx:387-389`).
+- The **tax lines** (GST 5%, QST 9.975% in Quebec by default; dynamic taxes depending on the tenant's jurisdiction) then the **Grand total** in bold.
+- A **"Quote columns"** section: five toggles that decide which columns are visible in the exported document — **Unit**, **Quantity**, **Unit price**, **Line amount**, **Labor and Material** (this last one disabled by default).
 
 #### B. Terms and exclusions
 
-`DevisConditionsEditor` component (`DevisPage.tsx:223`), collapsible. Two text areas (Terms / Exclusions), each with an **eye** to show or hide it, a **"Reset"** button (returns to the company defaults) and sample text. A badge indicates "Defaults" or "Custom". One line per term or exclusion; bullets and numbering are added automatically in the final document.
+`DevisConditionsEditor` component (`DevisPage.tsx:224`), collapsible. Two text areas (Terms / Exclusions), each with an **eye** to show or hide it, a **"Reset"** button (returns to the company defaults) and sample text. A badge indicates "Defaults" or "Custom". Write **one line per term** or per exclusion; bullets and numbering are added automatically in the final document. Saving happens when you leave the field.
 
 #### C. The action buttons
 
-Up to eight buttons (`DevisPage.tsx:2036`) depending on the quote's state:
+Up to ten buttons (`DevisPage.tsx:2038`) depending on the quote's state:
 
 | Button | Effect |
 |--------|--------|
-| **Generate HTML** | Produces the professional HTML document |
+| **Generate HTML** | Produces the professional HTML document (and caches it) |
+| **Edit the document** | Opens the WYSIWYG editor (see 2.10) |
 | **Preview** | Opens the document in a window (iframe) |
 | **Add a 3D render** | Opens the photorealistic render window (see 2.9) |
 | **Send to client** (primary) | Opens the email + public-link sending window |
@@ -218,75 +232,79 @@ Up to eight buttons (`DevisPage.tsx:2036`) depending on the quote's state:
 | **Copy CSV** | Copies the CSV to the clipboard |
 | **Excel (.xlsx)** | Downloads the Excel file |
 
-> The QuickBooks CSV contains the columns Item, Description, Category, Quantity, Unit, Unit Price, Amount, Tax Code, MO %, MO $, MAT %, MAT $. Prices in it are **already marked up** (line factor), to stay consistent with the HTML preview and the Excel.
+> **Three buttons touch the document; do not confuse them**: **Generate HTML** produces (and caches) the clean rendering; **Preview** displays that rendering; **Edit the document** opens the editor where you retouch the content before sending.
+>
+> The QuickBooks CSV contains the columns Item, Description, Category, Quantity, Unit, Unit Price, Amount, Tax Code, MO %, MO $, MAT %, MAT $. Prices in it are **already marked up** (line factor), to stay consistent with the HTML preview and the Excel (`DevisPage.tsx:149-201`).
 
 #### D. The lines
 
-Title "Lines ({n})" and an **"Add"** button. Each line is read and edited in place.
+Title "Lines ({n})" and an **"Add"** button (`DevisPage.tsx:2185`). Each line is read and edited in place.
 
 - **When reading**: the description (with a "%" badge if the line has its own markup), quantity × price (marked up), the amount (marked up), a visibility **eye**, an **edit** pencil, a **trash**. If Labor/Material display is on, a sub-line shows the "Labor x% / Material y%" split.
-- **When editing** (`startEditLine`, `DevisPage.tsx:1116`): description, quantity, unit, unit price, a **custom Labor/Material ratio** (two fields that complete each other, "Auto" button to return to keyword detection), and a **custom per-line markup** (Admin / Conting. / Profit — leave empty to inherit the quote's percentages; a "Custom" badge and an "Inherit from quote" link appear). A live preview shows "= {amount} (markup x%)".
+- **When editing**: description, quantity, unit, unit price, a **custom Labor/Material ratio** (two fields that complete each other, "Auto" button to return to keyword detection), and a **custom per-line markup** (Admin / Conting. / Profit — leave empty to inherit the quote's percentages; a "Custom" badge and an "Inherit from quote" link appear). A live preview shows "= {amount} (markup x%)".
 
-At the bottom, the **Labor/Material totals** if display is on, and the note **"Validity: {date}"**.
+At the bottom, the **Labor/Material totals** if display is on (`DevisPage.tsx:2461`), and the note **"Validity: {date}"**.
 
-> **Automatic Labor/Material detection.** From keywords in the description, the system guesses the labor / material split (20 rules covering Quebec trades, `MO_MAT_RULES`, `DevisPage.tsx:52`). Examples: painting 70/30, demolition 65/35, drywall 60/40, electrical 55/45, plumbing 50/50, roofing 45/55, concrete/foundation 40/60, insulation 35/65, excavation 30/70, cabinets 30/70, doors and windows 30/70. With no recognized keyword: 50/50. You can always force your own percentages.
+> **Automatic Labor/Material detection.** From keywords in the description, the system guesses the labor / material split (`_get_mo_mat_ratio`, `devis.py:1503`): painting 70/30, demolition 65/35, drywall 60/40, electrical 55/45, plumbing 50/50, roofing 45/55, concrete/foundation 40/60, insulation 35/65, excavation 30/70, cabinets 30/70, doors and windows 30/70, etc. With no recognized keyword: 50/50. You can always force your own percentages.
 
 ### 2.5 The panel's modals
 
-- **New quote** (`DevisPage.tsx:2491`) — two columns. Left: Project name (required), Client PO #, Client (Company), Client (Person), Manual entry, Status, Priority, Project type. Right: Current task (among 25 production tasks), Quote deadline, Planned start, Planned end, Price ($). Bottom: Description. A guard prevents double submission.
-- **Edit quote** (`DevisPage.tsx:2555`) — the same fields, plus the Quote type.
-- **Add a line** (`DevisPage.tsx:2628`) — Description (required), Quantity, Unit, Unit price, with a tax preview (Subtotal, taxes, Grand total).
-- **HTML preview** (`DevisPage.tsx:2668`) — the document iframe, with "Open in new tab" and "Close".
-- **Send to client** (`DevisPage.tsx:2746`) — a "Client email" field, an intro message explaining that the status will move to "Sent" and that a public validation link will be generated. After sending: an alert (success or warning depending on whether the email went out), the **public validation link** and a "Copy link" button.
+- **New quote** (`DevisPage.tsx:2501`) — two columns. Left: Project name (required), Client PO #, Client (Company), Client (Person), Manual entry, Status, Priority (Normal / Urgent / Critical), Project type. Right: Current task (among production tasks 1.1 → 16.4), Quote deadline, Planned start, Planned end, Price ($). Bottom: Description. A guard prevents double submission (`creatingRef`).
+- **Edit quote** (`DevisPage.tsx:2565`) — the same fields, plus the Quote type (Detailed / Budget).
+- **Add a line** (`DevisPage.tsx:2638`) — Description (required), Quantity, Unit, Unit price, with a tax preview (Pre-tax amount, taxes, Grand total).
+- **HTML preview** (`DevisPage.tsx:2678`) — the document iframe (`sandbox="allow-same-origin"`), with "Open in new tab" and "Close".
+- **Send to client** (`DevisPage.tsx:2765`) — a "Client email address" field, an intro message explaining that the status will move to "Sent" and that a public validation link will be generated. After sending: an alert (success or warning depending on whether the email went out), the **public validation link** and a "Copy link" button.
 
 ### 2.6 The "AI Estimation" tab
 
 `EstimationIA.tsx` component (1,728 lines). This is the conversation with an expert that **generates** a quote.
 
-**The toolbar** (`EstimationIA.tsx:1064`):
+**The toolbar** (`EstimationIA.tsx:1096`):
 
-- An **expert profile selector**, split into "My profiles" and "System profiles". The number of system profiles is **dynamic** (loaded at startup): it covers dozens of trades. Next to it, a **gear** opens the custom-profile manager.
+- An **expert profile selector**, split into "My profiles" and "System profiles". The number of system profiles is **dynamic** (loaded at startup): it covers dozens of trades (about sixty profiles on disk). Next to it, a **gear** opens the custom-profile manager.
 - A **Document** button to upload 1 to 5 files (`.pdf, .png, .jpg, .jpeg, .txt, .csv, .xlsx, .docx`, max 32 MB).
 - A **History** button, a **New** button, and an **AI-credit indicator** (balance in US dollars or "Unlimited").
 
-**Automatic profile detection.** Depending on the jurisdiction (remembered per tenant), a suitable profile is preselected. The first document upload switches to the **General Contractor** profile (category diagnostic).
+**Automatic profile detection.** Depending on the jurisdiction (remembered per tenant), a suitable profile is preselected. The first document upload switches to the **General Contractor** profile (category and area diagnostic).
 
-**The progress bar** shows the upload phases then the analysis phases. With several documents, the system uses "one AI agent per document + a coordinating chief".
+**The progress bar** shows the upload phases then the analysis phases. With several documents (2 to 5), the system uses "one AI agent per document + a coordinating chief".
 
 **The History panel** lists saved conversations (auto-saved after each answer), with inline rename and delete. Restoring a conversation re-establishes the client info card and the generated quote.
 
-**The linked-quote banner** shows in blue "Linked quote: {name} — items added to this quote" or in amber "No quote selected…". If no quote is linked, a **client info card** (see 2.8) appears to enter the information.
+**The linked-quote banner** shows in blue "Linked quote: {name} — items added to this quote" or in amber "No quote selected…". If no quote is linked, a **client info card** (see 2.8) appears to enter the information. In "no quote" mode, the preview uses the tenant's taxes to stay aligned with what the quote will produce (useful outside Quebec, GST/HST or US taxes).
 
-**The diagnostic banner** (General Contractor mode) displays the detected category and subcategory, and the breakdown by zone (To estimate / Renovation / Expansion / Existing kept, in sq.ft.).
+**The diagnostic banner** (General Contractor mode) displays the detected category and subcategory, and the breakdown by zone (To estimate / Renovation / Expansion / Existing kept excluded, in sq.ft.).
 
 **The document thumbnails** (persisted) let you, for each file, download it, activate or deactivate it from the AI context, or delete it.
 
-**The conversation area** shows the messages (Markdown rendering), a "{profile} is thinking…" indicator, and a starting state with a clickable sample question and a three-step guide ("1. Choose an expert · 2. Describe your project · 3. (optional) Attach a plan"). The input field lets you attach files (paperclip, max 5), type, then send.
+**The conversation area** shows the messages (Markdown rendering), a "{profile} is thinking…" indicator, and a starting state with a clickable sample question and a three-step guide. The input field lets you attach files (paperclip, max 5: `.pdf, .png, .jpg, .jpeg, .gif, .webp`), type, then send (Enter). A synchronous guard prevents double submission.
 
-**The "Generate quote" button** (`EstimationIA.tsx:1491`) launches the structuring. The result appears in a **generated-quote table** (`EstimationIA.tsx:1502`):
+**The "Generate quote" button** (`EstimationIA.tsx:1523`) launches the structuring. The result appears in a **generated-quote table**:
 
-- A header "Generated quote — {n} items" with the buttons **HTML** (local export, complete company-branded document, with schedule and signature area), **Add to quote** (if a quote is linked) or **Create new quote**.
-- The table is **grouped by trade** (colored sections, per-section total), with items **editable inline** (pencil, trash, bounds on quantity and price).
+- A header "Generated quote — {n} items" with the buttons **HTML** (local export, complete company-branded document, with schedule and signature area, content escaped against injection), **Add to quote** (if a quote is linked) or **Create new quote**.
+- The table is **grouped by trade** (colored sections, per-section total), with items **editable inline** (pencil, trash, bounds on quantity and price, minimum 0).
 - The totals: Subtotal, Administration (x%), Contingencies (x%), Profit (x%), Subtotal (pre-tax), taxes, **Grand total**.
 - An **"Estimated schedule" Gantt chart** appears if there is more than one section.
 
-**The profile manager** (`AiProfileManager.tsx`) is a window to create and edit your **custom AI profiles**: a **Name**, **Instructions** (personality and expertise), and a **knowledge base** (upload documents `.pdf, .txt, .csv, .xlsx, .docx, .md, .tsv`, max 20 MB — the text is extracted and injected into the AI's context).
+**The profile manager** (`AiProfileManager.tsx`) is a window to create and edit your **custom AI profiles**: a **Name**, **Instructions** (personality and expertise, pricing rules, standards to cite), and a **knowledge base** (upload reference documents, max 20 MB each — the text is extracted and injected into the AI's context).
 
 ### 2.7 The "Manual" tab — the Quebec Construction Template
 
 `ConstructionTemplate.tsx` component (1,130 lines). A banner shows whether a quote is linked. If none, a **client info card** appears. Then the template itself, with three sub-tabs (`ConstructionTemplate.tsx:583`):
 
-- **Works** — **9 fixed sections** numbered 0.0 to 8.0: Site Preparation and Demolition, Foundation (Infrastructure and Services), Structure and Framing, Exterior Envelope, Mechanical and Electrical Systems, Insulation and Waterproofing, Interior Finishes, Exterior Landscaping and Garage, Machinery. Each item is a **checkbox** that opens the Quantity / Unit / Unit price / Amount fields. Nine units are offered (lump sum, sq.ft., lin.ft., unit, hour, day, m², lin.m, cubic yard). You can add **custom lines** per section and **custom sections** (numbered 9.0 and up, renamable and removable). A warning appears if you use a reserved name (administration, contingencies, profit).
+- **Works** — **9 fixed sections** numbered 0.0 to 8.0: Preparatory work and demolition, Foundation, Structure and framing, Exterior envelope, Mechanical and electrical systems, Insulation and waterproofing, Interior finishes, Exterior landscaping and garage, Machinery. Each item is a **checkbox** that opens the Quantity / Unit / Unit price / Amount fields. Nine units are offered (lump sum, sq.ft., lin.ft., unit, hour, day, m², lin.m, cubic yard). You can add **custom lines** per section and **custom sections** (numbered 9.0 and up, renamable and removable). A warning appears if you use a reserved name (administration, contingencies, profit, overhead).
 - **Recap** — the items grouped by section, with the financial summary (Total works, Administration x%, Contingencies x%, Profit x%, Subtotal before taxes, taxes, GRAND TOTAL).
-- **Config** — three sliders Administration / Contingencies / Profit and the "total markup" display.
+- **Config** — three sliders Administration (max 15%), Contingencies (max 30%), Profit (max 50%), step 0.5, and the "total markup" display.
 
-At the bottom, the **"Apply to quote '{name}' ({n} items — {total})"** button (if a quote is linked) or **"Create new quote"**. The system excludes the administration/contingencies/profit categories and adds only lines with a quantity greater than 0. A **"Preview Quote HTML"** button lets you see the rendering **without saving anything**.
+> **Watch the bounds**: the Manual template's sliders (Admin 15% / Conting. 30% / Profit 50%) are **different** from the cost-plus defaults of the rest of the module (3 / 12 / 15). They are specific to this template.
+
+At the bottom, the **"Apply to quote '{name}' ({n} items — {total})"** button (if a quote is linked) or **"Create new quote"**. The system excludes the administration/contingencies/profit categories and adds only lines with a quantity greater than 0. A **"Preview Quote HTML"** button lets you see the rendering **without saving anything**. The customizable catalog (sections and lines) is stored in the database and served by the `devis/manuel-template` sub-router.
 
 ### 2.8 The client info card (shared)
 
-`ClientInfoCard.tsx` component, reused by AI Estimation, Takeoff and Manual when no quote is linked. A collapsible "Client info / Quote information" card with five sections: **Project** (Name), **Client** (Company / Person / Manual entry), **Schedule** (Quote deadline / Planned start), **References** (PO # / Priority: Normal, High, Urgent), **Notes** (Description).
+`ClientInfoCard.tsx` component, reused by AI Estimation, Takeoff and Manual when no quote is linked. A collapsible "Client info / Quote information" card with five sections: **Project** (Name), **Client** (Company / Person / Manual entry), **Schedule** (Quote deadline / Planned start), **References** (PO # / Priority), **Notes** (Description).
 
-### 2.9 The 3D render (optional, paid)
+### 2.9 The 3D render (optional, paid at generation)
 
 `DevisRenderModal.tsx` component (534 lines). Adds a **photorealistic image** at the bottom of the quote. The flow has five steps:
 
@@ -296,31 +314,72 @@ At the bottom, the **"Apply to quote '{name}' ({n} items — {total})"** button 
 4. **Render**: preview + cost shown in US dollars, with "Attach" or "Redo".
 5. **Attached**: "Replace", "Remove" or "Done".
 
-> **Generation is billed** (tenant credits ×1.30, via the `/cao/render` render module). **Attaching or removing is free.** Locks prevent double-clicking. The render then appears in the HTML preview **and** on the client's public page. **A single render per quote.**
+> **Generation is billed** (tenant credits ×1.30, via the `/cao/render` render module). **Attaching or removing is free** (no charge on the Quotes side). Locks prevent double-clicking. A paid but unattached render survives closing the window. The render then appears in the HTML preview **and** on the client's public page. **A single render per quote.**
 
-### 2.10 The "Conditions" tab (administrators)
+### 2.10 The client document editor (WYSIWYG) — Phase 2
 
-`DevisDefaultsTab` component (`DevisPage.tsx:2826`). Reserved for administrators. It edits the company's **default Terms and Exclusions** (two text areas, Save, Reset to system values). These texts apply to **new** quotes; existing quotes are not affected, and each quote can then be customized individually.
+`DevisDocumentEditor.tsx` component (343 lines). Opened by the **"Edit the document"** button of the detail panel (`DevisPage.tsx:2743`). This is a full-screen window that shows the **real HTML document** of the quote — the one that will go to the client — and lets you **retouch it by clicking on it**.
 
-### 2.11 The "AI Assistant" tab (read-only)
+#### A. How it works
 
-`DevisAssistantTab.tsx` component (152 lines). A conversational assistant that queries your **real quote data** (amounts, statuses, taxes, clients) and answers in natural language. Title "AI Assistant — Quotes", subtitle reminding that it is **read-only**. It offers three sample questions. Each answer shows metadata (tokens, cost, duration).
+The document is generated in "edit mode" (`generate-html?edit=true`): the server wraps each editable zone in an invisible marker, which lets the editor know **which field to update** when you click on it. This "edit-mode" HTML is **never** sent or cached for the client; the clean rendering stays served separately.
 
-> **This assistant creates and modifies nothing.** It is distinct from AI Estimation (which does generate). It consults, summarizes, compares. To act, go back to AI Estimation or the editor.
+- **Two modes**, via a button at the top: **Locked** (preview, the default) and **Edit**. In Edit mode, the editable zones underline in dotted blue; you click inside, you correct, and the change is **saved automatically as soon as you leave the field** (or with the Enter key on a single line). A brief green highlight confirms the save.
+- **In read-only mode**, editing is disabled: the document opens in preview only.
+- **"Revert to generated" button**: on opening, the editor takes a **snapshot of the state** of the quote. This button restores that snapshot — it **cancels all your edits** (with confirmation) and regenerates the document from the data.
 
-### 2.12 The "Takeoff" tab (the bridge)
+#### B. What you can modify
 
-The "Takeoff" tab loads the on-plan quantity-takeoff module (Chapter 30). From that module, two buttons bring the result back here: **"Apply to quote"** (adds the priced lines to the linked quote) and **"Create quote"** (creates a new quote from the takeoff). This is the second major "import" path: quantities measured on a real plan become priced lines.
+**Structured fields** (they change the quote's real data):
 
-### 2.13 The public page (client side)
+| Clickable zone | Effect | Endpoint |
+|----------------|--------|----------|
+| **Description bullets** (`notes_ligne`) | Rewrite an item's detail, one bullet per line | `PATCH /devis/{id}/lignes/{lid}/text` |
+| **Project title** (`nom_projet`) | Rename the project (never emptied) | `PUT /devis/{id}` |
+| **Terms / Exclusions** | Edit the multi-line blocks | `PUT /devis/{id}` |
+| **A section's title** (`categorie`) | Rename the section = **all its lines**; the document regenerates | `PATCH /devis/{id}/sections/rename` |
+| **A section's amount** (`section_amount`) | Set a new displayed amount: the server **distributes it proportionally** across the section's visible lines and **recomputes the total**; the document regenerates | `PATCH /devis/{id}/sections/amount` |
 
-`DevisPublicPage.tsx` component (538 lines), at `/devis/public/:token`, **without authentication**. This is what your client sees when they click the link received by email.
+**Display overrides specific to this document** (internal prefix `ov:`, `PATCH /devis/{id}/editor/override`). They change **only what is written** on this document and **never touch** the shared records (the contact, the company configuration) **nor the Grand total** (always computed from the sections). Clearing an override reverts the field to its original source. The allowed keys (`devis.py:10193-10205`):
 
-- **Header**: the company's contact details, the quote's number and title, then the full document in an iframe.
+| Group | Overridable fields |
+|-------|--------------------|
+| **Header** | `numero`, `date` |
+| **Client** | `client_nom`, `client_adresse` |
+| **Company** | `ent_nom`, `ent_adresse`, `ent_ville`, `ent_tel`, `ent_email` |
+| **Inclusions** | `inclusions_text` (free text) |
+| **Financial summary** | `subtotal_amt`, `admin_line` / `admin_amt`, `cont_line` / `cont_amt`, `profit_line` / `profit_amt`, `tax1_line` / `tax1_amt`, `tax2_line` / `tax2_amt` |
+| **Breakdown by trade** | dynamic keys `vent_mo:` / `vent_mat:` / `vent_tot:` followed by the section name (one override per section) |
+
+> **Important — two natures of edit.** The **structured fields** (section amounts, titles, bullets, terms) truly modify the quote and, for the amounts, **recompute** the document. The **display overrides** (number, contact details, summary cells, breakdown) change **only the printed text** of this specific document: they do not alter the data or the total. This is the right tool to fix, for example, a misspelled address on a single document without changing the client's record.
+
+#### C. Where the edits are kept
+
+The overrides and the restore snapshot are stored in a technical column of the quote (`metadonnees_json`), **specific to this document**: no other quote, no contact and no company configuration is affected. This column is created "on demand" at the write points (send, accept, decline, and editor actions), so it is guaranteed from the first edit onward.
+
+### 2.11 The "Conditions" tab (administrators)
+
+`DevisDefaultsTab` component (`DevisPage.tsx:2845`). Reserved for administrators. It edits the company's **default Terms and Exclusions** (two text areas, Save, Reset to system values; `GET/PUT /devis/defaults`). These texts seed **new** quotes; existing quotes are not affected, and each quote can then be customized individually.
+
+### 2.12 The "AI Assistant" tab (read-only)
+
+`DevisAssistantTab.tsx` component (152 lines). A conversational assistant that queries your **real quote data** (amounts, statuses, taxes, clients) and answers in natural language (`POST /devis/ai/chat`). Title "AI Assistant — Quotes", subtitle reminding that it is **read-only**. It offers three sample questions. Each answer shows metadata (tokens, cost).
+
+> **This assistant creates and modifies nothing.** It is distinct from AI Estimation (which does generate). It consults, summarizes, compares. A strict table allowlist and an anti-exfiltration filter prevent it from reading sensitive data (payroll, HR, accounts, Stripe). To act, go back to AI Estimation or the editor.
+
+### 2.13 The "Takeoff" tab (the bridge)
+
+The "Takeoff" tab loads the on-plan quantity-takeoff module (Chapter 32). From that module, two buttons bring the result back here: **"Apply to quote"** (adds the priced lines to the linked quote) and **"Create quote"** (creates a new quote from the takeoff). This is the second major "import" path: quantities measured on a real plan become priced lines (the administration/contingencies/profit categories and quantities of 0 are filtered out).
+
+### 2.14 The public page (client side)
+
+`DevisPublicPage.tsx` component (538 lines), at `/devis/public/:token`, **without authentication** (dedicated network instance, no token, no login redirect). This is what your client sees when they click the link received by email.
+
+- **Header**: the company name, the quote's number and title, then the full document in an iframe.
 - **Toolbar**: a **zoom** (50 to 200%, the mobile version starts at 60%), a **Print** button and a **Download** button (HTML file). A "Powered by Constructo AI" footer.
 - **Two decision buttons**: **Decline** and **Accept quote**.
-  - **Accept** opens a form: "Your full name" **and** a **drawn signature** (in a canvas). The confirmation button stays disabled until both the name **and** the signature are provided. The confirmation screen then shows "Signed by: {name}" with the signature image.
-  - **Decline** lets the client give a reason (optional).
+  - **Accept** opens a form: "Your full name" **and** a **drawn signature** (in a canvas, with the mouse or a finger, with a "Clear" button). The confirmation button stays disabled until both the name **and** the signature are provided. The confirmation screen then shows "Signed by: {name}" with the signature image.
+  - **Decline** lets the client give a **reason** (optional).
 - Possible states: loading, ready, accepted, declined, error, or "already decided" (if the client comes back later).
 
 ---
@@ -376,8 +435,8 @@ The "Takeoff" tab loads the on-plan quantity-takeoff module (Chapter 30). From t
 
 Two specialized endpoints work on an **already open** quote:
 
-- **From the text** (`POST /devis/{id}/ai-estimate`): the AI analyzes the quote's content. In **precision mode** (default), it "thinks" harder; it can consult the tenant's **product catalog** to anchor the prices.
-- **From a plan** (`POST /devis/{id}/ai-estimate-with-plan`): you upload a plan, the AI reads it (vision) and estimates. 32 MB cap, PDF up to 100 pages, automatic compression of large images, additional context up to 20,000 characters.
+- **From the text** (`POST /devis/{id}/ai-estimate`): the AI analyzes the quote's content, in **precision mode** (it "thinks" harder); it can consult the tenant's **product catalog** to anchor the prices.
+- **From a plan** (`POST /devis/{id}/ai-estimate-with-plan`): you upload a plan, the AI reads it (vision) and estimates. 32 MB cap, PDF up to 100 pages.
 
 Each estimate is **archived** (`devis_ai_estimations`) and can be viewed / deleted.
 
@@ -399,7 +458,7 @@ Each estimate is **archived** (`devis_ai_estimations`) and can be viewed / delet
 
 **At the line level** (line editing): enter Admin / Conting. / Profit **specific to that line**. Leave empty to inherit the quote's percentages.
 
-> **Caution**: changing a percentage **at the quote level clears** any override of the same part **on the lines** (`devis.py:9250`). So set the quote level first, then the per-line exceptions.
+> **Caution**: changing a percentage (or an amount) **at the quote level clears** any override of the same part **on the lines** (`devis.py:9439-9450`), so that the redistribution takes effect. So set the quote level first, then the per-line exceptions.
 
 ### 3.8 Customize the terms and exclusions
 
@@ -414,14 +473,19 @@ Each estimate is **archived** (`devis_ai_estimations`) and can be viewed / delet
 2. Check the layout, prices, schedule and terms in the iframe.
 3. If needed, **"Open in new tab"** for a full-page view.
 
-> The document is a **premium three-page** rendering in Letter format (8.5 × 11 in), in the company's colors (logo included), with schedule/Gantt and price banners (area, $/sq.ft., taxes, validity).
+> The document is a **premium three-page** rendering in Letter format (8.5 × 11 in), in the company's colors (logo included), bilingual (French or English depending on the tenant's language), with schedule/Gantt and price banners (area, $/sq.ft., validity).
 
-### 3.10 Add a 3D render
+### 3.10 Fine-tune the document before sending (WYSIWYG)
 
-1. Detail panel → **"Add a 3D render"**.
-2. Upload an image or a PDF, **crop**, set the quality and resolution.
-3. Launch the render (it **consumes credits**), check the preview, then **"Attach"**.
-4. The render appears in the HTML preview and on the public page. You can **Replace** or **Remove** it (free).
+1. Detail panel → **"Edit the document"**. The window opens in **locked preview**.
+2. Click **"Edit"** at the top. The editable zones underline.
+3. Click directly on a **text**, a **bullet**, a **section title** or a **section amount** and correct it. The change is saved when you leave the field.
+   - Renaming a **section** or changing a **section amount** regenerates the document immediately (the total is recomputed).
+   - The **contact details, the number, the date, the inclusions, the summary cells and the breakdown** are **display overrides**: they change only this document, not the records or the total.
+4. To undo everything, click **"Revert to generated"** (confirm).
+5. Close the window. The quote is up to date; then send it normally (3.11).
+
+> **Reminder**: what you edit here is **what the client will see**. The "edit-mode" HTML with its markers is never sent: on sending, the server regenerates the clean document, edits included.
 
 ### 3.11 Send the quote to the client
 
@@ -434,11 +498,13 @@ Each estimate is **archived** (`devis_ai_estimations`) and can be viewed / delet
    - records the recipient and the send date.
 4. Copy the **public validation link** shown if you also want to share it another way.
 
+> Email sending is "best-effort": if the mail server fails, the logical operation still succeeds (Sent status + link), and you can share the link manually.
+
 ### 3.12 The client accepts (with signature) or declines
 
 On the client side, on the public page:
 
-- **Accept**: they enter their **full name**, **draw their signature**, then confirm. Through an **atomic** update, the server moves the status to **Accepted** (a single "winner" in case of a double click), and records the name, the signature and the date. Then, in the background and without ever rolling back the acceptance even in case of a hiccup: **project creation**, copying of attachments, creation of work orders, moving the linked opportunity to "Won".
+- **Accept**: they enter their **full name**, **draw their signature**, then confirm. Through an **atomic** update, the server moves the status to **Accepted** (a single "winner" in case of a double click or two tabs), and records the name, the signature and the date. Then, in the background and **without ever rolling back the acceptance** even in case of a hiccup: **project creation** (number `PROJ-YYYY-NNNNN`), copying of attachments, creation of work orders from the template, moving the linked **opportunity** to "Won".
 - **Decline**: they can give a **reason** (optional). The status moves to **Declined** and the reason is recorded.
 
 In both cases, the contractor is notified.
@@ -453,7 +519,7 @@ If a quote is **Accepted** or **Completed** but does not yet have a project (for
 ### 3.14 Invoice
 
 1. Detail panel → **"Create invoice"** (visible if Accepted/Completed).
-2. Confirm. An **invoice** is created from the quote (Accounting module).
+2. Confirm. A **draft invoice** is created from the quote (Accounting module).
 
 ### 3.15 Export (Excel, QuickBooks CSV)
 
@@ -472,9 +538,9 @@ Three endpoints let you link employees to a quote (`GET/POST/DELETE /devis/{id}/
 
 ### 3.18 Calculate a CCQ or CNESST contribution
 
-Two small calculators are exposed (**pure-calculation** endpoints, without authentication):
+Two small calculators are exposed (**pure-calculation** endpoints, **without authentication** or a database):
 
-- **CCQ** (Commission de la construction du Québec — Quebec construction commission) (`POST /devis/calculate-ccq`): from a labor amount and a list of trades; per-trade rates are hard-coded (about 11.8 to 12.5%, default 12.5%). This is not an "hours × hourly rate" calculation, but "amount × trade rate".
+- **CCQ** (Commission de la construction du Québec — Quebec construction commission) (`POST /devis/calculate-ccq`): from a labor amount and a list of trades; per-trade rates are hard-coded (about 11.8 to 12.5%). This is not an "hours × hourly rate" calculation, but "amount × trade rate".
 - **CNESST** (Commission des normes, de l'équité, de la santé et de la sécurité du travail — Quebec workplace health and safety board) (`POST /devis/calculate-cnesst`): contribution = labor × rate (`taux_unite` parameter, default 1.80%).
 
 ### 3.19 Change the company's default terms (administrators)
@@ -507,17 +573,17 @@ Two small calculators are exposed (**pure-calculation** endpoints, without authe
 | Cancelled | Red | Cancelled internally |
 | Expired | Amber | Validity passed |
 
-The list filter exposes six statuses (All, Draft, Sent, Accepted, Declined, Expired). Key transitions: send → **Sent**; public acceptance → **Accepted**; public decline → **Declined**. Bulk update allows any status. Server-side, public access is **deny by default**: a status is only viewable or "decidable" by the client if it appears on an allowlist (`devis.py:12421` / `12427`).
+The list filter exposes six statuses (All, Draft, Sent, Accepted, Declined, Expired). Key transitions: send → **Sent**; public acceptance → **Accepted**; public decline → **Declined**. Bulk update allows any status. Server-side, public access is **deny by default**: a status is only viewable if it appears on the allowlist `_PUBLIC_VIEWABLE_STATUTS` (everything except draft), and "decidable" by the client only if it is sent / pending (`_PUBLIC_ACTIONABLE_STATUTS`, `devis.py:13201/13207`). Statuses are normalized (case, accents, underscores) before comparison.
 
 ### 4.2 Types and priorities
 
-- **Quote type**: Detailed (default), Budget.
-- **Project type**: New residential, Residential renovation, New commercial, Commercial renovation, Institutional/Public.
-- **Priority**: Normal (default), High, Urgent.
+- **Quote type**: Detailed (default), Budget. (Only two values.)
+- **Project type**: New residential, Residential renovation, New commercial, Commercial renovation, Institutional/Public. (Propagated to the project on acceptance.)
+- **Priority**: Normal (default), Urgent, Critical.
 
 ### 4.3 The cost-plus pricing model (cascade)
 
-The default values are Administration **3%**, Contingencies **12%**, Profit **15%** (`devis.py:1289-1291`), i.e., a total markup of **×1.30**.
+The default values are Administration **3%**, Contingencies **12%**, Profit **15%** (`devis.py:1289`), i.e., a total markup of **×1.30**.
 
 ```
 base                 = sum of (quantity × unit price) across the lines
@@ -532,33 +598,41 @@ GRAND TOTAL          = subtotal before taxes + GST + QST
 
 **Two representations of the markup**:
 
-- **In the database**, `devis_lignes.montant_ligne` = pure base cost (`quantity × price`, no markup). The quote's `administration / contingencies / profit` aggregates are recomputed on every write.
-- **In the rendered document** ("markup embedded" model), each line shows `montant_ligne × line_factor`, where `line_factor = 1 + adm + con + pro` (with any per-line overrides). The summary **does not add** the markup: it shows the "Subtotal" (markup already included) then **breaks it down** in gray.
+- **In the database**, `devis_lignes.montant_ligne` = pure base cost (`quantity × price`, no markup). The quote's `administration / contingencies / profit` aggregates are recomputed on every write (`_recompute_devis_totals`, `devis.py:9542`).
+- **In the rendered document** ("markup embedded" model), each line shows `montant_ligne × line_factor`, where `line_factor = 1 + adm + con + pro` (with any per-line overrides). The summary **does not add** the markup: it shows the "Subtotal (pre-tax)" (markup already included) then **breaks it down** in gray.
+
+> **Important guard**: the quote does **not** recompute a quote **without lines** (for example a lump-sum quote), so as not to overwrite its total with a zero `SUM` (`devis.py:9462`). Taxes are frozen at creation (a `tax1_rate` / `tax2_rate` snapshot) and support Canada (GST/QST/HST) as well as the United States.
 
 ### 4.4 Per-line markup overrides
 
-A line can carry its own percentages: `admin_pct_ligne` and `contingence_pct_ligne` (0 to 100), `profit_pct_ligne` (−100 to 999, to allow rebates or special cases). An empty value (NULL) = the line **inherits** the quote's percentages. These overrides are an **internal** tool: they are **never** shown to the client (the public page strips these fields).
+A line can carry its own percentages: `admin_pct_ligne` and `contingence_pct_ligne` (0 to 100), `profit_pct_ligne` (−100 to 999, to allow a rebate or a special case / inherited quotes). An empty value (NULL) = the line **inherits** the quote's percentages. These overrides are an **internal** tool: they are **never** shown to the client (the public page strips these fields).
 
 ### 4.5 The deterministic tool `calculer_prix_construction`
 
-To price a build, the AI does not invent the total: it calls a server-side **calculation tool** (`devis.py:736`). It provides the list of **floors** (gross area in sq.ft., with a weight per floor: ground floor 1.0, top floor 0.85, intermediate floors 0.80) and the **reduced zones** (unheated garage, basement), along with a **per-sq.ft. rate** (base cost). The server then applies the "base × 1.30 × taxes" cascade — **exactly** the same formula as the HTML document. Result: a reproducible cost estimate, with no missing surface.
+To price a build, the AI does not invent the total: it calls a server-side **calculation tool** (`devis.py:736`). It provides the list of **floors** (gross area in sq.ft., with a weight per floor: ground floor 1.0, top floor 0.85, intermediate floors 0.80), the **reduced zones** (cold garage, basement) and a **per-sq.ft. rate** (base cost). The heated garage is counted in the gross area; the cold garage and the basement go into the reduced zones. The server then applies the "base × 1.30 × taxes" cascade — **exactly** the same formula as the HTML document. Result: a reproducible cost estimate, with no missing surface.
 
 > This is where the per-sq.ft. rate lives: it is **supplied by the AI / expert profile**, not set by the server. No "$X/sq.ft." constant exists in the module.
 
-### 4.6 APCHQ validation ranges (soft)
+### 4.6 APCHQ validation ranges (soft, non-blocking)
 
-After a generation, the server checks that the per-sq.ft. price stays within a **reasonable range** for the category, and flags (without blocking) the outliers (`_validate_estimation_items`, `devis.py:6413`). APCHQ = Association des professionnels de la construction et de l'habitation du Québec (Quebec home-building industry association). Examples:
+After a generation, the server checks that the per-sq.ft. price stays within a **reasonable range** for the category, and flags (without ever blocking) the outliers (`_validate_estimation_items`, `_APCHQ_FOURCHETTES_PI2_2026`, `devis.py:6410`). APCHQ = Association des professionnels de la construction et de l'habitation du Québec (Quebec home-building industry association):
 
 | Category | Range $/sq.ft. |
 |----------|----------------|
 | New residential build | 200 – 450 |
 | Residential expansion | 250 – 500 |
-| Major renovation | 150 – 400 |
-| Basement | 80 – 200 |
+| Major residential renovation | 150 – 400 |
 | Kitchen renovation | 200 – 1000 |
+| Bathroom renovation | 250 – 1200 |
+| Basement finishing | 80 – 200 |
+| Roof replacement | 8 – 25 |
+| Garage construction | 100 – 250 |
+| Light commercial | 150 – 350 |
+| Heavy commercial | 250 – 600 |
+| Industrial | 100 – 300 |
 | (default) | 50 – 2000 |
 
-These checks are **non-blocking**: they produce warnings ([SOFT] or [CRITICAL]) but let the quote through. Other signals: price outside $0.01–$1M, quantity outside 0.001–100,000, total above $10M, one category concentrated above 40%, duplicates. The **default tier is "Economy"** = the bottom of the category's range.
+These checks are **non-blocking**: they produce warnings but let the quote through. Other guardrails: unit price outside $0.01–$1M, quantity outside 0.001–100,000, aggregate total above $10M, one category's concentration beyond 40%, duplicates. The **default tier is "Economy"** = the bottom of the category's range.
 
 ### 4.7 Fields of a line
 
@@ -570,26 +644,36 @@ These checks are **non-blocking**: they produce warnings ([SOFT] or [CRITICAL]) 
 | `prix_unitaire` | Yes | ≥ 0 |
 | `montant_ligne` | Auto | `round(quantity × price, 2)` = **base cost, no markup** |
 | `categorie` | No | Trade (grouping) |
-| `notes_ligne` | No | Item detail (bullets) |
+| `notes_ligne` | No | Item detail (bullets editable in the document) |
 | `visible` | No | Default true; false = excluded from the document |
 | `mo_pct` / `mat_pct` | No | Labor / material split |
 | `admin_pct_ligne` / `contingence_pct_ligne` / `profit_pct_ligne` | No | Markup overrides (see 4.4) |
 | `sequence_ligne` | Auto | Order |
 
-### 4.8 Units and categories
+### 4.8 The document editor — fields and overrides
 
-- **Manual template units** (9): lump sum, sq.ft., lin.ft., unit, hour, day, m², lin.m, cubic yard.
-- **Quote categories**: 21 reference trades (`_SOUMISSION_CATEGORIES`), each with an English equivalent. The AI tool schema switches automatically based on the tenant document's language.
-- **Default terms and exclusions**: 5 terms (30-day validity, 30/40/30 payment schedule, 1-year warranty, RBQ mention) and 15 hard-coded exclusions, overridable per quote then per company. (RBQ = Régie du bâtiment du Québec — Quebec building authority.)
+**Structured fields** (they modify the data) and their endpoints:
+
+| Field | Endpoint | Effect |
+|-------|----------|--------|
+| `notes_ligne` (bullets) | `PATCH /devis/{id}/lignes/{lid}/text` | Rewrites an item's detail |
+| `nom_projet` | `PUT /devis/{id}` | Renames the project (never emptied) |
+| `conditions_text` / `exclusions_text` | `PUT /devis/{id}` | Edits the blocks |
+| `categorie` | `PATCH /devis/{id}/sections/rename` | Renames the section (all its lines) |
+| `section_amount` | `PATCH /devis/{id}/sections/amount` | Distributes proportionally + recomputes; 422 refusal if the section is at $0 |
+
+**Per-document display overrides** (`PATCH /devis/{id}/editor/override`, prefix `ov:`, key ≤ 100 chars, value ≤ 2000 chars, empty value = deletion) — allowed keys: `numero`, `date`, `client_nom`, `client_adresse`, `ent_nom`, `ent_adresse`, `ent_ville`, `ent_tel`, `ent_email`, `inclusions_text`, summary cells (`subtotal_amt`, `admin_line`/`admin_amt`, `cont_line`/`cont_amt`, `profit_line`/`profit_amt`, `tax1_line`/`tax1_amt`, `tax2_line`/`tax2_amt`), and breakdown (`vent_mo:` / `vent_mat:` / `vent_tot:` + section). **These overrides are purely visual**: they **never** change the Grand total (computed from the sections) or the shared sources.
+
+**Snapshot / restore**: `POST /devis/{id}/editor/snapshot` (captures title, terms, exclusions and the state of the lines + current overrides) and `POST /devis/{id}/editor/restore` (cancels and regenerates; 404 if there is no snapshot). These edits live in `metadonnees_json`, specific to this document (guaranteed at the write points: send, accept, decline, editor actions — **not** at mere creation).
 
 ### 4.9 AI models and pricing
 
 | Feature | Model | Max tokens | Cost (per million, before margin) |
 |---------|-------|------------|-----------------------------------|
 | AI Estimation (conversation, generation, analysis, plan) | `claude-opus-4-8` | 32,000 | input $5, output $25, cache write $10, cache read $0.50 |
-| **Read-only** AI Assistant (`/devis/ai/chat`) | Sonnet (`AI_MODEL`) | 8,000 | ≈ $0.003/1k input, $0.015/1k output |
+| **Read-only** AI Assistant (`/devis/ai/chat`) | Sonnet (`AI_MODEL`) | — | ≈ $0.003/1k input, $0.015/1k output |
 
-In both cases, the real cost is **marked up 30%** and deducted from the tenant's prepaid credits, then logged (`track_ai_usage`). Calls to Claude are offloaded off the event loop so they do not freeze the shared ERP. Prompt caching (1 h) and the files API reduce costs on long conversations.
+In both cases, the real cost is **marked up 30%** and deducted from the tenant's prepaid credits, then logged (`track_ai_usage`). Each paid AI endpoint applies the same guard: presence of the Anthropic client (503 otherwise), **tenant context** (schema present, 400 otherwise, to prevent any "free" call), AI guard (403), credit check (402 if depleted) — the latter offloaded off the event loop so as not to freeze the shared ERP. Prompt caching (1 h) and the files API reduce costs on long conversations. On an empty AI response, the endpoint returns 502 **without charging**.
 
 ### 4.10 Limits and caps
 
@@ -597,20 +681,22 @@ In both cases, the real cost is **marked up 30%** and deducted from the tenant's
 |------|-------|
 | Public token validity | 90 days |
 | Signature (data-URL image) | ≤ 500,000 characters |
-| Document / plan analysis | ≤ 32 MB, PDF ≤ 100 pages |
-| Conversation with files | ≤ 5 files, ≤ 10 MB each |
-| Multi-document analysis | ≤ 5 files |
+| Signature name | 2 to 200 characters |
+| Single document / plan analysis | ≤ 40 MB, PDF ≤ 100 pages |
+| Multi-document analysis / conversation with files | ≤ 176 MB total, ≤ 5 files |
 | A profile's knowledge base | ≤ 20 MB per document |
 | A profile's instructions | ≤ 200,000 characters |
 | Terms / exclusions | ≤ 10,000 characters, ≤ 200 lines |
+| Display override (editor) | key ≤ 100 chars, value ≤ 2000 chars |
 | AI messages (anti-abuse) | ≤ 400 messages, ≤ 1,500,000 characters |
-| `/devis/ai/chat` rate | 20 requests/min per IP |
+| `/devis/ai/chat`, `ai-chat`, `ai-chat-with-files` rate | 20 requests/min per IP |
+| `ai-generate-soumission`, `ai-analyze-document(s)`, `ai-estimate(-with-plan)` rate | 10 requests/min per IP |
 | `/devis/public/` rate | 60 requests/min per IP |
 | Deletion | Forbidden if Accepted/Completed |
 
-### 4.11 Endpoint table
+### 4.11 Endpoint table (72 total)
 
-**Main router `/api/erp/v1/devis`** (57 endpoints — a selection of the most used):
+**Main router `/api/erp/v1/devis`** (63 endpoints — a selection of the most used):
 
 | Method | Path | Role |
 |--------|------|------|
@@ -622,10 +708,12 @@ In both cases, the real cost is **marked up 30%** and deducted from the tenant's
 | DELETE | `/devis/{id}` | Delete (refused if Accepted/Completed) |
 | POST | `/devis/batch-update` | Change status in bulk |
 | POST | `/devis/{id}/lignes` · `/lignes/batch` | Add one / several lines |
-| PUT · PATCH · DELETE | `/devis/{id}/lignes/{lid}` [`/visibility`] | Edit / hide / delete a line |
+| PUT · PATCH · DELETE | `/devis/{id}/lignes/{lid}` [`/text`] [`/visibility`] | Edit / rewrite the bullets / hide / delete a line |
+| PATCH | `/devis/{id}/sections/amount` · `/sections/rename` | Editor: redistribute an amount / rename a section |
+| POST · POST · PATCH | `/devis/{id}/editor/snapshot` · `/editor/restore` · `/editor/override` | Editor: snapshot / restore / display override |
 | POST | `/devis/{id}/preview-html-with-items` | Preview with in-memory lines (0 writes) |
-| POST | `/devis/{id}/generate-html` | Generate and cache the document |
-| POST · DELETE | `/devis/{id}/render` | Attach / remove a 3D render |
+| POST | `/devis/{id}/generate-html?edit=bool` | Generate the document (`edit=true` = editor markers, not cached) |
+| POST · DELETE | `/devis/{id}/render` | Attach / remove a 3D render (free) |
 | GET | `/devis/{id}/export-xlsx` | Excel export |
 | POST | `/devis/{id}/send` | Send (status → Sent, email + token) |
 | POST | `/devis/{id}/convert-to-project` | Convert to a project (idempotent) |
@@ -647,9 +735,15 @@ In both cases, the real cost is **marked up 30%** and deducted from the tenant's
 
 **Manual template catalog router `/api/erp/v1/devis/manuel-template`** (8 endpoints): `GET/POST /sections`, `PUT/DELETE /sections/{id}`, `GET/POST /lignes`, `PUT/DELETE /lignes/{id}`.
 
-### 4.12 PostgreSQL tables
+### 4.12 Units, categories and defaults
 
-`devis`, `devis_lignes`, `devis_assignations`, `devis_ai_estimations`, `ai_profiles`, `ai_profile_documents`, `conversations`, `conversation_documents`, `manuel_custom_sections`, `manuel_custom_lignes` (per tenant); `public.devis_public_tokens` (shared). The module also writes to `companies`, `contacts`, `projects`, `opportunities`, `produits`, `employees`, `factures`. Several columns are created "on demand" (idempotent lazy migrations), with schema-qualified DDL to avoid accidentally writing into the shared schema.
+- **Manual template units** (9): lump sum, sq.ft., lin.ft., unit, hour, day, m², lin.m, cubic yard.
+- **AI quote categories**: **21 reference trades** (`_SOUMISSION_CATEGORIES`) — Foundation, Framing, Roofing, Exterior cladding, Doors and windows, Plumbing, Electrical, HVAC ventilation, Insulation, Interior finishing, Exterior finishing, Demolition, Excavation, Concrete, Masonry, Painting, Flooring, Kitchen cabinets, Bathroom, Site landscaping, Permits and fees — each with an English equivalent. The AI tool schema switches automatically based on the tenant document's language.
+- **Default terms and exclusions**: a set of terms (validity, payment terms, warranty, RBQ mention) and hard-coded exclusions, overridable per quote then per company. (RBQ = Régie du bâtiment du Québec — Quebec building authority.)
+
+### 4.13 PostgreSQL tables
+
+`devis`, `devis_lignes`, `devis_assignments`, `devis_ai_estimations`, `ai_profiles`, `ai_profile_documents`, `conversations`, `conversation_documents`, `manuel_custom_sections`, `manuel_custom_lignes` (per tenant); `public.devis_public_tokens` (shared). The module also writes to `companies`, `contacts`, `projects`, `opportunities`, `produits`, `employees`, `factures`. Several columns are created "on demand" (idempotent lazy migrations: `administration_pct` / `contingences_pct` / `profit_pct`, `date_fin`, `project_id`, `type_soumission`, `type_projet`, `render_image`, `metadonnees_json`), with schema-qualified DDL to avoid accidentally writing into the shared schema.
 
 ---
 
@@ -659,15 +753,15 @@ In both cases, the real cost is **marked up 30%** and deducted from the tenant's
 
 | Module | Link |
 |--------|------|
-| **CRM / Opportunities** (ch. 06) | An opportunity can spawn a quote; on acceptance, the linked opportunity moves to "Won". The opportunity-number badge appears at the top of the detail panel. |
-| **Projects** (ch. 09) | On acceptance (or through manual conversion), a **project** is created and linked (concurrency-safe and idempotent operation). The starting work orders are generated. |
-| **Companies / Contacts** (ch. 04-05) | A quote's client references a company, a contact, or a manually entered name; the name is cached. |
-| **Dossiers** (ch. 07) | On acceptance, the attachments are copied to the project; the quote appears in the 360° Record. |
-| **Accounting** (ch. 15) | The **Create invoice** button creates a (draft) invoice from the quote. |
-| **Takeoff** (ch. 30) | The takeoff measures quantities on a plan and sends them back here ("Apply to quote" / "Create quote"). |
-| **CAD / 3D Render** (ch. 31) | The photorealistic 3D render attached to the quote comes from the render engine (billed to credits). |
-| **Store / Products** (ch. 10) | Estimating an existing quote can consult the **product catalog** to anchor the prices. |
-| **Employees** (ch. 11) | Assigning employees to a quote. |
+| **CRM / Opportunities** (ch. 05) | An opportunity can spawn a quote; on acceptance, the linked opportunity moves to "Won". The opportunity-number badge appears at the top of the detail panel. |
+| **Projects** (ch. 08) | On acceptance (or through manual conversion), a **project** is created and linked (concurrency-safe and idempotent operation). The starting work orders are generated. |
+| **Companies / Contacts** (ch. 03-04) | A quote's client references a company, a contact, or a manually entered name; the name is cached. |
+| **Dossiers** (ch. 06) | On acceptance, the attachments are copied to the project; the quote appears in the 360° Record. |
+| **Accounting** (ch. 14) | The **Create invoice** button creates a (draft) invoice from the quote. |
+| **Takeoff** (ch. 32) | The takeoff measures quantities on a plan and sends them back here ("Apply to quote" / "Create quote"). |
+| **CAD / 3D Render** (ch. 25 and 27) | The photorealistic 3D render attached to the quote comes from the render engine (billed to credits at generation). |
+| **Store / Products** (ch. 09) | Estimating an existing quote can consult the **product catalog** to anchor the prices. |
+| **Employees** (ch. 10) | Assigning employees to a quote. |
 
 ### 5.2 FAQ
 
@@ -683,11 +777,23 @@ Yes. The 15% is a **default**. You can enter any profit percentage (0 to 100%) o
 **What per-sq.ft. price does the AI use?**
 There is no fixed value in the system. It is the **AI expert** (and its profile) that supplies the per-sq.ft. rate, per floor, based on the tier and the region. The server only applies the ×1.30 markup and checks that the result stays within a reasonable range (soft, non-blocking validation).
 
+**What is the difference between "Generate HTML", "Preview" and "Edit the document"?**
+"Generate HTML" produces and caches the clean rendering; "Preview" displays it; "Edit the document" opens the visual editor where you click on the rendering to retouch it before sending.
+
+**If I fix the client's address in the document editor, does their record change?**
+No. The contact details (client and company), the number, the date, the inclusions, the summary cells and the breakdown are **display overrides specific to this document**: they modify neither the contact's record, nor the company configuration, nor the other quotes, nor the Grand total.
+
+**In the editor, does changing a section's amount change the total?**
+Yes — but cleanly. The new amount is **distributed proportionally** across the section's visible lines, then the total is **recomputed**. This is a structured field, unlike the display overrides. (A section at $0 cannot be distributed: edit its lines individually.)
+
+**Can I undo my edits in the editor?**
+Yes, with **"Revert to generated"**: this restores the snapshot taken on opening and regenerates the document from the data.
+
 **Does "importing" a plan create the lines automatically?**
-No. Import **analyzes** the document (category, areas, trades). You review, then click "Generate quote" to create the lines. The Takeoff, for its part, produces quantities that you transfer with "Apply to quote".
+No. Import **analyzes** the document (category, areas, trades). You review, then click "Generate quote" to create the lines. The Takeoff, for its part, produces quantities that you transfer with "Apply to quote". There is no "import" endpoint: the lines go through the standard line endpoints.
 
 **Why doesn't the "Conditions" tab appear for me?**
-It is reserved for **administrators**: it sets the whole company's default terms/exclusions.
+It is reserved for **administrators**: it sets the whole company's default terms/exclusions. The terms of a **specific** quote, however, remain editable by everyone.
 
 **Is the 3D render free?**
 No for **generation** (tenant AI credits ×1.30). Yes for **attaching** or **removing** an already-generated render.
@@ -707,6 +813,9 @@ No (400 refusal). Change its status first, then delete.
 **What exactly does the client see on the public page?**
 The complete document, with zoom, print and download — but **without** the sensitive information (per-line markups, Labor/Material split, token, internal notes, metadata), which is stripped before sending.
 
+**Is there a phone number associated with this module?**
+No. No number is hard-coded in the Quotes module. The phone number that appears on the client document comes from the **company configuration** (and can be overridden, for a given document, via the editor).
+
 **Do the CCQ and CNESST calculators account for hours?**
 No. They work on a labor **amount** × a **rate** (per trade for the CCQ, a unit rate for the CNESST).
 
@@ -714,26 +823,27 @@ No. They work on a labor **amount** × a **rate** (per trade for the CCQ, a unit
 There is no duplication of a full quote. To start from a base, use the **Manual** tab (template) or **AI Estimation**, or recreate the quote and transfer lines.
 
 **Does the system handle multiple currencies?**
-Taxes and labels are the tenant's (by default GST 5% / QST 9.975% in Quebec). There is no multi-currency conversion in this module.
+Taxes and labels are the tenant's (by default GST 5% / QST 9.975% in Quebec; Canada and the United States are supported). There is no multi-currency conversion in this module.
 
 ---
 
 ## 6. Summary
 
-- **On-screen title: "Quotes"** (route `/devis`). Six tabs: Quotes, AI Estimation, Takeoff, Manual, Conditions (administrators), AI Assistant (read-only).
-- **Three ways to build**: **manual** (line by line or the 9-section Quebec Construction Template), **AI** (expert conversation → "Generate quote"), **import** (plan/document analyzed by the AI, or Takeoff quantities). Import **never writes** the lines on its own: you review, then you generate.
+- **On-screen title: "Quotes"** (route `/devis`). Six tabs: Quotes, AI Estimation, Takeoff, Manual, Conditions (administrators), AI Assistant (read-only). A non-administrator sees five.
+- **Three ways to build**: **manual** (line by line or the 9-section Quebec Construction Template), **AI** (expert conversation → "Generate quote"), **import** (plan/document analyzed by the AI, or Takeoff quantities). Import **never writes** the lines on its own and is not a distinct server-side mode: you review, then you generate.
+- **WYSIWYG document editor** ("Edit the document"): retouch the real rendering by clicking on it. **Structured** fields (title, bullets, terms, section title and amount) vs **document-specific display overrides** (number, date, client/company contact details, inclusions, summary cells, breakdown) that change neither the shared records nor the Grand total. "Revert to generated" button.
 - **"Markup embedded" pricing model**: the line prices already contain Administration (3%) + Contingencies (12%) + Profit (15%) ≈ ×1.30. The three summary lines are an **informational breakdown**, not amounts added on top. The **15% profit** is an **editable default**, not a lock. The **per-sq.ft. rate** comes from the AI, not from a constant.
 - **Numbering** `DEV-YYYY-NNN`, fail-safe even under simultaneous clicks.
 - **Sending**: status → Sent + 90-day public link + company-branded email. **Acceptance** by the client with a **mandatory drawn signature** → automatic creation of the **project** and the opportunity moving to "Won".
 - **Exports**: Excel (.xlsx), QuickBooks CSV. **No direct PDF** — use Generate HTML + Print, or the public page.
-- **3D render** optional and **paid** (generation billed to credits; attaching is free; a single one per quote).
-- **AI**: Opus 4.8 for estimating (32,000 tokens), Sonnet for the read-only assistant; real cost ×1.30 deducted from credits, with a possible charge before the action (402 if the balance is insufficient).
+- **3D render** optional, **paid at generation** (billed to credits; attaching and removing are free; a single one per quote).
+- **AI**: Opus 4.8 for estimating (32,000 tokens), Sonnet for the read-only assistant; real cost ×1.30 deducted from credits; context + credit guard (402 if the balance is insufficient, 502 without charge on an empty response).
 - **Permissions**: everything is open to the team, except editing the company's **default terms** (administrators). **Deletion forbidden** if Accepted/Completed. **Read-only** mode if the subscription is past due.
 
 ---
 
-*Verified source files: `backend/routers/devis.py` (13,085 lines, 57 endpoints) · `backend/routers/devis_ai.py` (344 lines) · `backend/routers/devis_manuel_template.py` (663 lines) · `frontend/src/pages/DevisPage.tsx` (3,052 lines) · `pages/DevisPublicPage.tsx` (538 lines) · `components/devis/EstimationIA.tsx` (1,728 lines) · `ConstructionTemplate.tsx` (1,130 lines) · `DevisRenderModal.tsx` (534 lines) · `AiProfileManager.tsx` (410 lines) · `DevisAssistantTab.tsx` (152 lines) · `api/devis.ts` · `api/devisAi.ts` · i18n `en/{devis,devisAssistant,devisRender}.json`.*
+*Verified source files: `backend/routers/devis.py` (13,869 lines, 63 endpoints) · `backend/routers/devis_ai.py` (344 lines, 1 endpoint) · `backend/routers/devis_manuel_template.py` (663 lines, 8 endpoints) · `frontend/src/pages/DevisPage.tsx` (3,071 lines) · `components/devis/DevisDocumentEditor.tsx` (343 lines) · `pages/DevisPublicPage.tsx` (538 lines) · `components/devis/EstimationIA.tsx` (1,728 lines) · `ConstructionTemplate.tsx` (1,130 lines) · `DevisRenderModal.tsx` (534 lines) · `AiProfileManager.tsx` (410 lines) · `DevisAssistantTab.tsx` (152 lines) · `api/devis.ts` · `api/devisAi.ts`.*
 
-*Related manuals: 06 — CRM / Opportunities · 07 — Dossiers · 09 — Projects · 15 — Accounting · 30 — Takeoff · 31 — CAD / 3D Modeling.*
+*Related manuals: 05 — CRM / Opportunities · 06 — Dossiers · 08 — Projects · 14 — Accounting · 25 — CAD / 3D Modeling · 27 — 3D Render · 32 — Takeoff.*
 
-*Constructo AI ERP Manual — Module 07 "Quotes and estimates (manual, AI, import)" — v3.0 verified — 2026-07.*
+*Constructo AI ERP Manual — Module 07 "Quotes and estimates (manual, AI, import)" — v4.0 verified — 2026-07.*
