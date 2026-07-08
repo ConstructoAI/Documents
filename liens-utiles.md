@@ -251,4 +251,4 @@ Pour proposer un ajout, ouvrir une issue dans `ConstructoAI/Documents` avec le l
 
 ---
 
-> Retour au manuel : [README](./README.md) — Voir aussi : [27-outils-web.md](./27-outils-web.md), [29-aide-ressources.md](./29-aide-ressources.md)
+> Retour au manuel : [README](./README.md) — Voir aussi : [29-outils-web.md](./29-outils-web.md), [33-aide-ressources.md](./33-aide-ressources.md)

@@ -649,12 +649,12 @@ A: Yes. The page title is fixed; only the active tab changes the content.
 - `ERP_REACT/frontend/src/App.tsx` (routing `/`, `/analyses` → `/dashboard`), `Sidebar.tsx:40`
 
 **Related manuals**:
-- Module 02 — Analytics (`02-principal-analyses.md`): former page now merged into the present module.
-- Module 06 — CRM (`06-gestion-crm-opportunites.md`): source of the sales pipeline.
-- Module 08 — Quotes (`08-ventes-soumissions.md`): source of the quote conversion rate.
-- Module 09 — Projects (`09-ventes-projets.md`): source of profitability and progress.
-- Module 10 — Store (`10-operations-magasin.md`): source of stock alerts and value.
-- Module 11 — Employees (`11-operations-employes.md`) + Module 13 — Time Tracking (`13-operations-pointage.md`): source of HR productivity.
-- Module 14 — Purchase Orders (`14-operations-bons-de-commande.md`): source of the top suppliers.
-- Module 15 — Accounting (`15-operations-comptabilite.md`): source of invoices, revenue, balance due and aging.
-- Module 25 — AI Assistant (`25-communication-assistant-ia.md`): full conversational assistant (the dashboard's assistant is a read-only BI variant of it).
+- Module 01 — Analytics (`01-principal-tableau-de-bord.md`): former page now merged into the present module.
+- Module 05 — CRM (`05-gestion-crm-opportunites.md`): source of the sales pipeline.
+- Module 07 — Quotes (`07-ventes-soumissions.md`): source of the quote conversion rate.
+- Module 08 — Projects (`08-ventes-projets.md`): source of profitability and progress.
+- Module 09 — Store (`09-operations-magasin.md`): source of stock alerts and value.
+- Module 10 — Employees (`10-operations-employes.md`) + Module 12 — Time Tracking (`12-operations-pointage.md`): source of HR productivity.
+- Module 13 — Purchase Orders (`13-operations-bons-de-commande.md`): source of the top suppliers.
+- Module 14 — Accounting (`14-operations-comptabilite.md`): source of invoices, revenue, balance due and aging.
+- Module 24 — AI Assistant (`24-communication-assistant-ia.md`): full conversational assistant (the dashboard's assistant is a read-only BI variant of it).

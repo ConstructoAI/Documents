@@ -1,23 +1,25 @@
 # Manuel utilisateur — ERP AI de Constructo AI
 
-> **Logiciel de gestion intégré pour entreprises de construction au Québec**
-> **Date** : 2026-04-26
-> **Version** : 2.0 (31 modules — couverture menu sidebar complète + Métré + DAO ; audit QA validé sur les 29, Métré en v1.0, DAO en v2.0)
-> **Public cible** : utilisateurs finaux (chefs de projet, gestionnaires, comptables, employés terrain, administrateurs)
+Logiciel de gestion intégré pour les entreprises de construction au Québec.
+
+> **Version** : 3.0 — refonte complète vérifiée par rapport au code source
+> **Date** : 2026-07-08
+> **Public cible** : utilisateurs finaux (chefs de projet, gestionnaires, comptables, employés de terrain, administrateurs)
+> **Langues** : français (ce dossier) et anglais (sous-dossier [`en/`](en/README.md))
 
 ---
 
 ## État de la documentation
 
-Ce dossier contient **31 manuels utilisateur** : les 29 couvrant le menu sidebar + le module **Métré** (onglet de Soumissions) + le module **DAO / Modélisation 3D** (section Outils).
+Ce dossier contient **38 manuels d'utilisation**, un par module et sous-module de l'écosystème Constructo AI, dans l'ordre du menu latéral, suivis des applications co-hébergées (Immobilier, Portail B2B/B2C, SEAOP, Estimation Express, Pointeur mobile).
 
 | Statut | Signification |
-|---|---|
-| 🟢 **v2.0 vérifié + QA passé** | Manuel rédigé/refait à partir du code source réel + audit multi-agent appliqué |
+|--------|---------------|
+| ✅ v3.0 vérifié code | Chaque manuel a été rédigé à partir du **code source actuel** (routers backend, pages React, fichiers i18n), corrigé linguistiquement (accents, orthographe, anglicismes — norme OQLF), puis traduit en anglais. |
 
-**Tous les manuels sont en v2.0 vérifié + QA** — chaque affirmation est traçable jusqu'au code (`backend/routers/*.py`, `frontend/src/pages/*.tsx`, `frontend/src/api/*.ts`).
+Chaque affirmation est traçable jusqu'au code (`ERP_REACT/backend/routers/*.py`, `frontend/src/pages/*.tsx`, `frontend/src/api/*.ts`, applications séparées `IMMO_REACT`, `SEAOP_REACT`, `ESTIMATION_EXPRESS_REACT`, `MOBILE_REACT`).
 
-**Convention de nommage** : `NN-section-module.md` où `NN` reflète l'ordre dans le menu sidebar (Principal → Suivi → Gestion → Ventes → Opérations → Terrain → Communication → Outils → Configuration → Aide).
+**Version anglaise** : chaque manuel possède son équivalent anglais dans le sous-dossier [`en/`](en/), au même nom de fichier. Voir [`en/README.md`](en/README.md).
 
 ---
 
@@ -26,206 +28,129 @@ Ce dossier contient **31 manuels utilisateur** : les 29 couvrant le menu sidebar
 ### Principal
 
 | # | Module | Fichier |
-|---|---|---|
-| 01 | **Tableau de bord** | [01-principal-tableau-de-bord.md](./01-principal-tableau-de-bord.md) |
-| 02 | **Analyses** | [02-principal-analyses.md](./02-principal-analyses.md) |
-
-### Suivi
-
-| # | Module | Fichier |
-|---|---|---|
-| 03 | **Suivi / Gantt** | [03-suivi-gantt.md](./03-suivi-gantt.md) |
+|---|--------|---------|
+| 01 | Tableau de bord et statistiques | [01-principal-tableau-de-bord.md](01-principal-tableau-de-bord.md) |
+| 02 | Suivi (Kanban, Gantt, Calendrier) | [02-suivi-gantt.md](02-suivi-gantt.md) |
 
 ### Gestion
 
 | # | Module | Fichier |
-|---|---|---|
-| 04 | **Entreprises** (clients/fournisseurs) | [04-gestion-entreprises.md](./04-gestion-entreprises.md) |
-| 05 | **Contacts** | [05-gestion-contacts.md](./05-gestion-contacts.md) |
-| 06 | **CRM** (opportunités, pipeline) | [06-gestion-crm-opportunites.md](./06-gestion-crm-opportunites.md) |
-
-### Ventes
-
-| # | Module | Fichier |
-|---|---|---|
-| 07 | **Dossiers** (Fiche 360) | [07-ventes-dossiers.md](./07-ventes-dossiers.md) |
-| 08 | **Soumissions** (Devis) | [08-ventes-soumissions.md](./08-ventes-soumissions.md) |
-| 09 | **Projets** | [09-ventes-projets.md](./09-ventes-projets.md) |
-| 30 | **Métré** (prise de quantités sur PDF — onglet de Soumissions) | [30-metre-pdf.md](./30-metre-pdf.md) |
+|---|--------|---------|
+| 03 | Entreprises (clients et fournisseurs) | [03-gestion-entreprises.md](03-gestion-entreprises.md) |
+| 04 | Contacts | [04-gestion-contacts.md](04-gestion-contacts.md) |
+| 05 | Ventes (CRM, pipeline, back-office B2B) | [05-gestion-crm-opportunites.md](05-gestion-crm-opportunites.md) |
+| 06 | Dossiers (gestion documentaire) | [06-ventes-dossiers.md](06-ventes-dossiers.md) |
+| 07 | Soumissions et devis (manuel, IA, import) | [07-ventes-soumissions.md](07-ventes-soumissions.md) |
+| 08 | Projets de construction | [08-ventes-projets.md](08-ventes-projets.md) |
 
 ### Opérations
 
 | # | Module | Fichier |
-|---|---|---|
-| 10 | **Magasin** (Inventaire) | [10-operations-magasin.md](./10-operations-magasin.md) |
-| 11 | **Employés** (RH) | [11-operations-employes.md](./11-operations-employes.md) |
-| 12 | **Bons de Travail** (BT) | [12-operations-bons-de-travail.md](./12-operations-bons-de-travail.md) |
-| 13 | **Pointage** | [13-operations-pointage.md](./13-operations-pointage.md) |
-| 14 | **Bons de Commande** (Achats) | [14-operations-bons-de-commande.md](./14-operations-bons-de-commande.md) |
-| 15 | **Comptabilité** (Factures) | [15-operations-comptabilite.md](./15-operations-comptabilite.md) |
+|---|--------|---------|
+| 09 | Magasin (produits, inventaire, achats, RFQ) | [09-operations-magasin.md](09-operations-magasin.md) |
+| 10 | Employés (ressources humaines) | [10-operations-employes.md](10-operations-employes.md) |
+| 11 | Bons de travail | [11-operations-bons-de-travail.md](11-operations-bons-de-travail.md) |
+| 12 | Pointage et heures (+ paie CCQ, feuillets T4/RL-1/PD7A) | [12-operations-pointage.md](12-operations-pointage.md) |
+| 13 | Bons de commande (achats fournisseurs) | [13-operations-bons-de-commande.md](13-operations-bons-de-commande.md) |
+| 14 | Comptabilité (grand livre, factures, WIP, retenues) | [14-operations-comptabilite.md](14-operations-comptabilite.md) |
 
 ### Terrain
 
 | # | Module | Fichier |
-|---|---|---|
-| 16 | **Météo Chantier** | [16-terrain-meteo-chantier.md](./16-terrain-meteo-chantier.md) |
-| 17 | **Conformité RBQ/CCQ** | [17-terrain-conformite.md](./17-terrain-conformite.md) |
-| 18 | **Subventions** | [18-terrain-subventions.md](./18-terrain-subventions.md) |
-| 19 | **Immobilier** | [19-terrain-immobilier.md](./19-terrain-immobilier.md) |
-| 20 | **Logistique** | [20-terrain-logistique.md](./20-terrain-logistique.md) |
-| 21 | **Location** | [21-terrain-location.md](./21-terrain-location.md) |
-| 22 | **Maintenance** | [22-terrain-maintenance.md](./22-terrain-maintenance.md) |
+|---|--------|---------|
+| 15 | Météo chantier | [15-terrain-meteo-chantier.md](15-terrain-meteo-chantier.md) |
+| 16 | Conformité RBQ / CCQ | [16-terrain-conformite.md](16-terrain-conformite.md) |
+| 17 | Subventions et aides gouvernementales | [17-terrain-subventions.md](17-terrain-subventions.md) |
+| 18 | Logistique et livraisons | [18-terrain-logistique.md](18-terrain-logistique.md) |
+| 19 | Location d'équipements et main-d'œuvre | [19-terrain-location.md](19-terrain-location.md) |
+| 20 | Maintenance (préventive, corrective) | [20-terrain-maintenance.md](20-terrain-maintenance.md) |
 
 ### Communication
 
 | # | Module | Fichier |
-|---|---|---|
-| 23 | **Emails** | [23-communication-emails.md](./23-communication-emails.md) |
-| 24 | **Messagerie** | [24-communication-messagerie.md](./24-communication-messagerie.md) |
-| 25 | **Assistant IA** | [25-communication-assistant-ia.md](./25-communication-assistant-ia.md) |
+|---|--------|---------|
+| 21 | Courriels (IMAP/SMTP) | [21-communication-emails.md](21-communication-emails.md) |
+| 22 | Messagerie interne | [22-communication-messagerie.md](22-communication-messagerie.md) |
+| 23 | Agent vocal IA (standardiste virtuelle) | [23-communication-agent-vocal.md](23-communication-agent-vocal.md) |
+| 24 | Assistant IA (moteur IA général) | [24-communication-assistant-ia.md](24-communication-assistant-ia.md) |
+
+### Conception 3D
+
+| # | Module | Fichier |
+|---|--------|---------|
+| 25 | DAO / Modélisation 3D | [25-outils-dao-modelisation.md](25-outils-dao-modelisation.md) |
+| 26 | PDF3D (plan vers 3D) | [26-conception3d-pdf3d-hover.md](26-conception3d-pdf3d-hover.md) |
+| 27 | Rendu 3D photoréaliste | [27-conception3d-rendu-3d.md](27-conception3d-rendu-3d.md) |
 
 ### Outils
 
 | # | Module | Fichier |
-|---|---|---|
-| 26 | **Calculateurs** | [26-outils-calculateurs.md](./26-outils-calculateurs.md) |
-| 27 | **Web** (recherche intégrée) | [27-outils-web.md](./27-outils-web.md) |
-| 31 | **DAO / Modélisation 3D** | [31-outils-dao-modelisation.md](./31-outils-dao-modelisation.md) |
+|---|--------|---------|
+| 28 | Calculateurs de construction | [28-outils-calculateurs.md](28-outils-calculateurs.md) |
+| 29 | Web (recherche temps réel) | [29-outils-web.md](29-outils-web.md) |
+| 32 | Métré (prise de quantités sur PDF) | [32-metre-pdf.md](32-metre-pdf.md) |
 
-### Configuration
-
-| # | Module | Fichier |
-|---|---|---|
-| 28 | **Configuration / Administration** | [28-configuration.md](./28-configuration.md) |
-
-### Aide & Ressources
+### Système
 
 | # | Module | Fichier |
-|---|---|---|
-| 29 | **Aide & Ressources** (liens externes) | [29-aide-ressources.md](./29-aide-ressources.md) |
+|---|--------|---------|
+| 30 | Configuration (entreprise, utilisateurs, abonnement) | [30-configuration.md](30-configuration.md) |
+| 31 | Intégrations comptables (QuickBooks, Sage) | [31-integrations-comptables.md](31-integrations-comptables.md) |
+| 33 | Aide et ressources | [33-aide-ressources.md](33-aide-ressources.md) |
+
+### Programmes (applications co-hébergées)
+
+| # | Programme | Fichier |
+|---|-----------|---------|
+| 34 | Immobilier (promoteur et vitrine publique) | [34-terrain-immobilier.md](34-terrain-immobilier.md) |
+| 35 | Portail B2B / B2C (clients et fournisseurs) | [35-programme-portail-b2b.md](35-programme-portail-b2b.md) |
+| 36 | SEAOP (appels d'offres publics du Québec) | [36-programme-seaop.md](36-programme-seaop.md) |
+| 37 | Estimation Express (sous-application publique payante) | [37-programme-estimation-express.md](37-programme-estimation-express.md) |
+| 38 | Pointeur mobile (application PWA de pointage) | [38-programme-pointeur-mobile.md](38-programme-pointeur-mobile.md) |
 
 ---
 
-## Total documentation
+## Premiers pas
 
-- **31 manuels** en français Québec
-- **~960 KB** de documentation utilisateur professionnelle
-- **100% couverture** du menu sidebar de l'ERP
-- **Zéro hallucination** — chaque affirmation traçable jusqu'au code source
-- **Audit QA multi-agent** appliqué sur les 29 manuels (~70 bugs détectés et corrigés)
+### 1. Connexion
 
----
+1. Accédez à l'application dans votre navigateur.
+2. Entrez le courriel de votre entreprise.
+3. Saisissez votre nom d'utilisateur et votre mot de passe.
+4. Cliquez sur « Se connecter ».
 
-## Refonte v2.0 — TERMINÉE ✅ (29/29 modules)
+### 2. Navigation
 
-### Méthodologie v2.0
+- Utilisez le **menu latéral gauche** pour naviguer entre les modules.
+- Le **tableau de bord** affiche vos indicateurs clés dès la connexion.
+- L'**Assistant IA** (bouton en haut à droite) répond à vos questions en langage naturel.
 
-1. **Phase 1 — Audit exhaustif** : agents multi-agent lisent l'intégralité du backend (router Python) + frontend (page TSX) + API client + types.
-2. **Phase 2 — Rédaction stricte** : aucune supposition, aucune fonctionnalité « probable ». Chaque affirmation vérifiée contre le code (référencée par fichier:ligne).
-3. **Phase 3 — Documentation des limitations** : les fonctionnalités absentes du code sont explicitement listées comme « PAS implémentées ».
-4. **Phase 4 — Audit QA multi-agent** : 7 agents en parallèle vérifient les 29 manuels selon 14 critères (structure, cohérence code, hallucinations, qualité, cross-refs).
-5. **Phase 5 — Renommage intuitif** : numérotation alignée sur l'ordre du menu sidebar.
+### 3. Aide
 
-### Résultats
-
-- **29/29 modules** ✅ vérifiés + QA passé
-- **Convention de nommage** : `NN-section-module.md` (ex: `04-gestion-entreprises.md`)
-- **Limitations connues exposées** : pas de PMP complet, pas de mobile desktop, pas d'audit log centralisé, pas de drill-down dashboard, FK déclarées mais non remplies, etc.
+- Chaque module dispose de son manuel dans ce dossier (français) et dans [`en/`](en/) (anglais).
+- Voir aussi le fichier [liens-utiles.md](liens-utiles.md) pour des ressources externes (RBQ, CCQ, CNESST, programmes de subventions, etc.).
+- Support : **info@constructoai.ca** | **1 (936) 587-1141**.
 
 ---
 
-## Comment utiliser ce manuel
+## Points forts du système
 
-### Pour les nouveaux utilisateurs
-
-Ordre suggéré pour découvrir l'ERP :
-
-1. [Tableau de bord (01)](./01-principal-tableau-de-bord.md) — vue d'ensemble
-2. [Entreprises (04)](./04-gestion-entreprises.md) — clients & fournisseurs
-3. [Contacts (05)](./05-gestion-contacts.md) — personnes
-4. [Projets (09)](./09-ventes-projets.md) — premier chantier
-5. [Soumissions (08)](./08-ventes-soumissions.md) — première soumission
-
-### Pour les rôles spécifiques
-
-| Si vous êtes... | Modules prioritaires |
-|---|---|
-| **Chef de projet** | Projets (09), Suivi/Gantt (03), Bons de Travail (12), Dossiers (07), Pointage (13), Météo (16) |
-| **Estimateur** | Soumissions (08), **Métré (30)**, Magasin (10), Calculateurs (26), DAO / Modélisation 3D (31), Assistant IA (25) |
-| **Comptable** | Comptabilité (15), Bons de Commande (14), Tableau de bord (01), Analyses (02), Subventions (18) |
-| **Magasinier / Acheteur** | Magasin (10), Bons de Commande (14), Logistique (20), Maintenance (22) |
-| **Contremaître** | Bons de Travail (12), Pointage (13), Employés (11), Dossiers (07), Météo (16) |
-| **Promoteur immobilier** | Immobilier (19), CRM (06), Soumissions (08), Comptabilité (15), Subventions (18) |
-| **Responsable conformité** | Conformité RBQ/CCQ (17), Employés (11), Subventions (18), Configuration (28) |
-| **Responsable flotte/équipement** | Logistique (20), Location (21), Maintenance (22), Magasin (10) |
-| **Communications / Service client** | Emails (23), Messagerie (24), CRM (06), Contacts (05) |
-| **Administrateur** | Configuration (28), tous les autres |
-
-### Pour rechercher une fonctionnalité
-
-- **Pipeline commercial** : CRM (06) → Soumissions (08) → Projets (09) → Bons de Travail (12) → Comptabilité (15)
-- **Cycle achat** : Bons de Commande (14) → Magasin (10) → Comptabilité (15)
-- **Cycle terrain** : Projets (09) → Bons de Travail (12) → Pointage (13) → Météo (16) → Logistique (20) → Maintenance (22)
-- **Conformité légale Québec** : Conformité RBQ/CCQ (17) + Subventions (18) + Employés (11)
-- **Outils** : DAO / Modélisation 3D (31) + Métré (30) + Calculateurs (26) + Web (27) + Assistant IA (25)
-- **Chiffrage / takeoff** : Métré (30) → Soumissions (08) → Projets (09)
-- **Conception / modélisation 3D** : DAO (31) → rendu IA → export GLB / PDF
-
----
-
-## Conventions FR-QC
-
-| Élément | Format | Exemple |
-|---|---|---|
-| Devise | $ CAD, virgule décimale, espace insécable | 15 000,50 $ |
-| Date | AAAA-MM-JJ | 2026-04-26 |
-| Heure | HH:MM (24 h) | 13:45 |
-| TPS | 5,000 % (fédéral) | |
-| TVQ | 9,975 % (provincial Québec) | |
-
-## Formats de numérotation
-
-| Module | Format | Exemple |
-|---|---|---|
-| Projet | PROJ-AAAA-NNNNN | PROJ-2026-00042 |
-| Opportunité | OPP-NNNNN | OPP-00042 |
-| Devis | DEV-AAAA-NNN | DEV-2026-001 |
-| Bon de Travail | BT-NNNNN | BT-00012 |
-| Bon de Commande | BC-NNNNN | BC-00007 |
-| Facture | FACT-AAAA-NNNNN | FACT-2026-00031 |
-| Dossier | DOS-AAAA-NNNNN | DOS-2026-00001 |
-| Terrain (Immobilier) | TER-NNNNN | TER-00012 |
-| Contrat de Location | LOC-NNNNN | LOC-00021 |
-| Maintenance Request | MR-NNNNN | MR-00045 |
-| Subvention (référence interne) | SUB-AAAAMMJJHHMMSS-NNNNN | SUB-20260426143055-00012 |
-
----
-
-## Architecture technique
-
-- **Backend** : FastAPI Python 3.11+, PostgreSQL multi-tenant
-- **Frontend** : React + TypeScript + Vite + Tailwind CSS
-- **IA** : Claude Sonnet 4.6 + Opus 4.7 (Anthropic) — selon module
-- **Hébergement** : Render.com (Canada — Loi 25)
-- **Paiement** : Stripe
-- **Stockage fichiers** : PostgreSQL BYTEA
-- **Email** : IMAP/SMTP standard (Gmail App Password, M365 OAuth2, GoDaddy, Yahoo, iCloud, custom)
-- **Météo** : Open-Meteo (API gratuite, pas de clé)
-- **Web** : Outils natifs Claude (web_search, web_fetch)
-- **Comptabilité** : Engine interne + intégration QuickBooks Online (sync bidirectionnelle)
+- **Conformité québécoise native** : RBQ, CCQ, TPS/TVQ, CNESST, Loi 16, Loi 25.
+- **Intelligence artificielle** : assistants spécialisés (Claude), estimation, vision, rendu 3D, agent vocal.
+- **Calculateurs métier** : outils conformes aux normes CCQ, CSA, CNB, ASTM, AWS.
+- **Paie Québec** : RRQ, RQAP, AE, FSS, CNESST, CCQ, feuillets T4 et Relevé 1.
+- **Intégrations comptables** : QuickBooks Online (OAuth 2.0), Sage.
+- **Portail client B2B/B2C**, **appels d'offres SEAOP**, **estimation publique** et **application mobile** de pointage.
+- **Architecture multi-entreprises** (multi-tenant).
 
 ---
 
 ## Support
 
-| Pour... | Contact |
-|---|---|
-| Questions utilisateur | Votre administrateur Constructo |
-| Demande d'évolution | info@constructoai.ca |
-| Bug technique | info@constructoai.ca |
-| Tutoriels vidéo | [YouTube ConstructoAI](https://www.youtube.com/channel/UC3EGXYQNj5UYGiyNfiiom_A) |
-| Liens utiles externes | [Page liens utiles](https://github.com/ConstructoAI/Documents/blob/main/liens-utiles.md) |
+- **Assistant IA** : disponible dans l'application.
+- **Courriel** : info@constructoai.ca
+- **Téléphone** : 1 (936) 587-1141
 
 ---
 
-*ERP Constructo — README documentation utilisateur — v2.0 (29 modules audit QA validé) + Métré (30, v1.0) + DAO / Modélisation 3D (31, v2.0) — màj 2026-06-20*
+© 2026 Constructo AI — Tous droits réservés | Développé par Sylvain Leduc

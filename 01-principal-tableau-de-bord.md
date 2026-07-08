@@ -649,12 +649,12 @@ R : Oui. Le titre de la page est fixe ; seul l'onglet actif change le contenu.
 - `ERP_REACT/frontend/src/App.tsx` (routage `/`, `/analyses` → `/dashboard`), `Sidebar.tsx:40`
 
 **Manuels liés** :
-- Module 02 — Analyses (`02-principal-analyses.md`) : ancienne page désormais fusionnée dans le présent module.
-- Module 06 — CRM (`06-gestion-crm-opportunites.md`) : source du pipeline commercial.
-- Module 08 — Soumissions (`08-ventes-soumissions.md`) : source du taux de conversion des devis.
-- Module 09 — Projets (`09-ventes-projets.md`) : source de la rentabilité et de la progression.
-- Module 10 — Magasin (`10-operations-magasin.md`) : source des alertes et de la valeur de stock.
-- Module 11 — Employés (`11-operations-employes.md`) + Module 13 — Pointage (`13-operations-pointage.md`) : source de la productivité RH.
-- Module 14 — Bons de commande (`14-operations-bons-de-commande.md`) : source du top fournisseurs.
-- Module 15 — Comptabilité (`15-operations-comptabilite.md`) : source des factures, revenus, solde dû et vieillissement.
-- Module 25 — Assistant IA (`25-communication-assistant-ia.md`) : assistant conversationnel complet (l'assistant du tableau de bord en est une variante BI en lecture seule).
+- Module 01 — Analyses (`01-principal-tableau-de-bord.md`) : ancienne page désormais fusionnée dans le présent module.
+- Module 05 — CRM (`05-gestion-crm-opportunites.md`) : source du pipeline commercial.
+- Module 07 — Soumissions (`07-ventes-soumissions.md`) : source du taux de conversion des devis.
+- Module 08 — Projets (`08-ventes-projets.md`) : source de la rentabilité et de la progression.
+- Module 09 — Magasin (`09-operations-magasin.md`) : source des alertes et de la valeur de stock.
+- Module 10 — Employés (`10-operations-employes.md`) + Module 12 — Pointage (`12-operations-pointage.md`) : source de la productivité RH.
+- Module 13 — Bons de commande (`13-operations-bons-de-commande.md`) : source du top fournisseurs.
+- Module 14 — Comptabilité (`14-operations-comptabilite.md`) : source des factures, revenus, solde dû et vieillissement.
+- Module 24 — Assistant IA (`24-communication-assistant-ia.md`) : assistant conversationnel complet (l'assistant du tableau de bord en est une variante BI en lecture seule).
